@@ -13,6 +13,15 @@
 
 ---
 
+## 2026-10-17｜Claude Code｜scripts/build_buyback_hub.py（收購價總覽 HTML）的幾個選擇
+使用者要求的任務（不在任務清單上），完全不連網。規格沒寫明的地方這樣處理：
+- **來源**：以 `custom_pages_index.md` 為主（有發佈／隱藏狀態，隱藏頁不收），`quick_audit.csv` 只補列表沒有的頁面（狀態碼 200）。目前兩邊都是 140 頁、網址代碼完全一致。
+- **篩選**：標題含「收購價」、含 iPhone／iPad／air數字／Apple Watch、有容量（Apple Watch 例外），且不含「導覽列、收購表、總表、門市、據點、估價」。
+- **連結文字**：去掉店名與「標準規格」；`air4` → `iPad Air 4`、`iPad Mini` → `iPad mini`、Apple Watch 尺寸補 `mm`（例如 `Series 10 42mm (GPS)`）；保留原標題的「二手收購價」。
+- **網址**：href 用加引號的 `href="/pages/…"`，中文代碼做百分比編碼（與前台實際網址相同），避免編輯器改寫中文網址。
+- **排序**：系列 iPhone 17 → 11 → SE/XR/XS → iPad → Apple Watch。iPhone 組內 Pro Max → Pro → Plus → 標準 → mini → e（16e 歸在 iPhone 16 系列），容量小到大；SE/XR/XS、iPad、Apple Watch 依上市時間由新到舊。**不確定**：「iPad Air 11」（沒標晶片）我當成 2024 年 M2 版，排在 iPad Pro M4 後面。
+- **同名頁**：iPhone 17 Pro Max 512GB、256GB 各有兩頁（`/pages/17-pro-max-512g` 與 `/pages/iphone-17-pro-max-512gb-二手收購價`；`/pages/17-pro-max-256g` 與 `/pages/17-pro-max-256g-20260414171746`），兩邊前台都是 200。為了湊滿 140 頁兩頁都列出，核對 CSV 的 `note` 欄有標註。**請使用者決定保留哪一頁**（另一頁建議隱藏或轉址，總覽頁就刪掉那一行）。
+
 ## 2026-10-16｜agy｜審查 scripts/admin_explore.py（--dynamic 動態載入頁模式）通過
 審查 `scripts/admin_explore.py` 與 `tests/test_admin_explore.py`（共 274 項 pytest 測試全數通過）：
 - **只重讀指定的兩頁**：`--dynamic`（或 `--mode dynamic`）啟動時透過 `reset_dynamic_progress` 將 `/admin/menus` 與 `/admin/custom_pages_index`（含 `/admin/custom_pages` 分頁）從 `progress.json` 的已讀與 404 紀錄移除，只重抓這兩頁，不影響其他已讀紀錄。
