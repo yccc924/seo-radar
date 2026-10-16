@@ -18,6 +18,7 @@
 - [x] R2 `research/gsc-api.md`：Search Console API 用服務帳戶連線的完整步驟（給完全沒做過的人看），以及 searchanalytics 查詢的欄位與限制。
 - [x] R3 `research/site-snapshot.md`：實際瀏覽 sinchih.com.tw 的首頁、一個商品頁、一篇文章、收購價目頁，記錄目前的 title、description、H1、JSON-LD 狀況。
 - [x] R4 `research/keywords.md`：整理三類關鍵字的分類規則（收購類 / 商品類 / 內容類），各列 20 個例子。
+- [x] R5 `research/cyberbiz-api.md`：Cyberbiz 是否提供 API 可用程式讀寫部落格文章、自訂頁面的內容與 SEO 欄位？方案、申請方式與限制。
 
 ## 階段 2：骨架（🛠 Claude Code）
 - [x] C1 專案骨架、requirements、`.gitignore`、`.env.example`、pytest 設定
