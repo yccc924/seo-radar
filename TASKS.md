@@ -12,15 +12,15 @@
 - [ ] 申請 Gmail 應用程式密碼（寄週報用）
 
 ## 階段 1：研究（🔍 agy，結果寫進 `research/`）
-- [ ] R1 `research/cyberbiz.md`：Cyberbiz 上哪些東西改得動？
+- [x] R1 `research/cyberbiz.md`：Cyberbiz 上哪些東西改得動？
       商品頁 title / description、部落格、自訂 HTML / head、JSON-LD、圖片 alt、網址、robots、sitemap 位置。
       每項標註「可改 / 不能改 / 要付費方案」，附官方說明連結。
-- [ ] R2 `research/gsc-api.md`：Search Console API 用服務帳戶連線的完整步驟（給完全沒做過的人看），以及 searchanalytics 查詢的欄位與限制。
-- [ ] R3 `research/site-snapshot.md`：實際瀏覽 sinchih.com.tw 的首頁、一個商品頁、一篇文章、收購價目頁，記錄目前的 title、description、H1、JSON-LD 狀況。
-- [ ] R4 `research/keywords.md`：整理三類關鍵字的分類規則（收購類 / 商品類 / 內容類），各列 20 個例子。
+- [x] R2 `research/gsc-api.md`：Search Console API 用服務帳戶連線的完整步驟（給完全沒做過的人看），以及 searchanalytics 查詢的欄位與限制。
+- [x] R3 `research/site-snapshot.md`：實際瀏覽 sinchih.com.tw 的首頁、一個商品頁、一篇文章、收購價目頁，記錄目前的 title、description、H1、JSON-LD 狀況。
+- [x] R4 `research/keywords.md`：整理三類關鍵字的分類規則（收購類 / 商品類 / 內容類），各列 20 個例子。
 
 ## 階段 2：骨架（🛠 Claude Code）
-- [ ] C1 專案骨架、requirements、`.gitignore`、`.env.example`、pytest 設定
+- [x] C1 專案骨架、requirements、`.gitignore`、`.env.example`、pytest 設定
 - [ ] C2 `db.py`：SQLite 資料表（gsc_rows、pages、issues、runs）
 - [ ] C3 `gsc.py`：抓 28 天資料存進資料庫（依 R2）
 - [ ] C4 `opportunities.py`：三種機會的計算與排序
@@ -39,6 +39,7 @@
 - [ ] J6 壞掉的連結
 - [ ] J7 重複 title / description（跨頁檢查）
 - [ ] J8 為 C4 補完整測試
+- [ ] J9 檢查 meta description（及 JSON-LD description）是否含有 CSS 或程式碼
 
 ## 階段 4：審查與上線
 - [ ] 🔍 agy 審查整個專案，寫進 `DISCUSSION.md`
