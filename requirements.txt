@@ -7,6 +7,7 @@ google-api-python-client>=2.140
 google-auth>=2.30
 streamlit>=1.38
 pandas>=2.2
+playwright>=1.45
 
 # 開發與測試
 pytest>=8.3

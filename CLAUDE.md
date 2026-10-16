@@ -17,6 +17,9 @@
 ## 程式規範
 - Python 3.12，型別註記，函式附繁體中文 docstring
 - 金鑰只從 `.env` 讀，絕不寫死在程式裡，絕不 commit `.env` 或 `credentials/`
+- 所有連到 `sinchih.com.tw` 或 Cyberbiz 的腳本（前台和後台），每個頁面之間隨機等待 2～5 秒
+- cookie 只能存在程式記憶體中，禁止印出、寫入 log 或存成檔案
+- 禁止讀取 `C:\Users\ycc\Desktop\xinchi-tools-main` 裡的任何 cookie 或帳號檔案（例如 `sogi_accounts.json`）
 - 每個模組都要有 pytest 測試；網路呼叫要能 mock，測試不可連真的網站
 - 健檢規則放 `src/seo_radar/checks/`，一條規則一個檔案，介面統一（見 C6）
 

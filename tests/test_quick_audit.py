@@ -168,13 +168,20 @@ class TestRobots:
         assert qa.is_allowed(parser, f"{SITE}/pages/ok") is allowed
 
     def test_crawl_delay(self) -> None:
-        """Crawl-delay 比 1 秒長時採用它，比 1 秒短時仍用 1 秒。"""
-        slow = qa.build_robot_parser(200, "User-agent: *\nCrawl-delay: 5\n")
-        fast = qa.build_robot_parser(200, "User-agent: *\nCrawl-delay: 0.2\n")
+        """讀出 robots.txt 宣告的 Crawl-delay，沒宣告時為 0。"""
+        slow = qa.build_robot_parser(200, "User-agent: *\nCrawl-delay: 8\n")
+        # 標準庫 RobotFileParser 只接受整數的 Crawl-delay，小數（如 0.2）會被忽略
+        fast = qa.build_robot_parser(200, "User-agent: *\nCrawl-delay: 1\n")
         none = qa.build_robot_parser(200, "User-agent: *\nDisallow:\n")
-        assert qa.crawl_delay_for(slow) == 5
+        assert qa.crawl_delay_for(slow) == 8
         assert qa.crawl_delay_for(fast) == 1
-        assert qa.crawl_delay_for(none) == 1
+        assert qa.crawl_delay_for(none) == 0
+
+    def test_random_page_delay_range(self) -> None:
+        """隨機等待時間一定落在 2～5 秒之間。"""
+        delays = [qa.random_page_delay() for _ in range(500)]
+        assert all(2.0 <= d <= 5.0 for d in delays)
+        assert len(set(delays)) > 1
 
     def test_fetcher_blocks_disallowed_without_request(self) -> None:
         """robots 禁止的網址不會發出請求。"""
@@ -201,7 +208,7 @@ class TestRobots:
         assert len(session.calls) == 1
 
     def test_fetcher_delay_and_get_only(self) -> None:
-        """每個請求之間都等待至少 1 秒，帶 User-Agent，不跟隨轉址。"""
+        """每個請求之間都隨機等待 2～5 秒，帶 User-Agent，不跟隨轉址。"""
         session = FakeSession(
             {
                 f"{SITE}/robots.txt": FakeResponse(200, ROBOTS, {}),
@@ -210,13 +217,28 @@ class TestRobots:
             }
         )
         sleeps: list[float] = []
-        fetcher = qa.PoliteFetcher(session, SITE, delay=0.1, sleep=sleeps.append)
+        fetcher = qa.PoliteFetcher(session, SITE, sleep=sleeps.append)
         fetcher.fetch(f"{SITE}/pages/a")
         fetcher.fetch(f"{SITE}/pages/b")
-        assert sleeps == [1.0, 1.0]
+        assert len(sleeps) == 2
+        assert all(2.0 <= s <= 5.0 for s in sleeps)
         for _, kwargs in session.calls:
             assert kwargs["allow_redirects"] is False
             assert kwargs["headers"]["User-Agent"] == qa.USER_AGENT
+
+    def test_longer_crawl_delay_wins(self) -> None:
+        """Crawl-delay 比隨機秒數長時以 Crawl-delay 為準；較短時仍用隨機 2～5 秒。"""
+        for declared, expected in (("8", 8.0), ("1", 3.5)):
+            session = FakeSession(
+                {
+                    f"{SITE}/robots.txt": FakeResponse(200, f"User-agent: *\nCrawl-delay: {declared}\n", {}),
+                    f"{SITE}/pages/a": FakeResponse(200, "<html></html>"),
+                }
+            )
+            sleeps: list[float] = []
+            fetcher = qa.PoliteFetcher(session, SITE, sleep=sleeps.append, random_delay=lambda: 3.5)
+            fetcher.fetch(f"{SITE}/pages/a")
+            assert sleeps == [expected]
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +572,7 @@ class TestRunAudit:
         assert f"{SITE}/pages/secret" not in requested
         assert f"{SITE}/products/skip-me" not in requested
         assert len(sleeps) == len(requested) - 1
-        assert all(s >= 1.0 for s in sleeps)
+        assert all(2.0 <= s <= 5.0 for s in sleeps)
 
         by_url = {r.decoded_url: r for r in results}
         assert "robots.txt 不允許" in by_url[f"{SITE}/pages/secret"].error

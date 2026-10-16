@@ -13,6 +13,7 @@ _ENV_KEYS = (
     "SMTP_USER",
     "SMTP_PASSWORD",
     "REPORT_TO",
+    "XINCHI_TOOLS_PATH",
 )
 
 

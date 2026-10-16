@@ -7,7 +7,7 @@
 安全規則：
 - 只發 GET 請求、不登入、不送表單、不帶 cookie 以外的任何身分資訊。
 - 嚴格遵守 robots.txt；robots.txt 讀不到（5xx 或連線失敗）時一律不爬。
-- 每個請求間隔至少 1 秒；robots.txt 有 Crawl-delay 且更長時以它為準。
+- 每個請求之間隨機等待 2～5 秒；robots.txt 有 Crawl-delay 且更長時以它為準。
 - 只抓與網站同網域的網址，不跟隨轉址（轉址只記錄狀態碼）。
 
 用法：
@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import random
 import re
 import sys
 import time
@@ -36,7 +37,8 @@ from bs4 import BeautifulSoup
 
 DEFAULT_SITE = "https://www.sinchih.com.tw"
 USER_AGENT = "seo-radar-quick-audit/0.1 (read-only SEO audit)"
-MIN_DELAY_SEC = 1.0
+MIN_DELAY_SEC = 2.0
+MAX_DELAY_SEC = 5.0
 REQUEST_TIMEOUT_SEC = 20
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "research" / "audit"
 
@@ -153,12 +155,15 @@ def is_allowed(parser: RobotFileParser, url: str, user_agent: str = USER_AGENT) 
     return parser.can_fetch(user_agent, url)
 
 
-def crawl_delay_for(
-    parser: RobotFileParser, user_agent: str = USER_AGENT, minimum: float = MIN_DELAY_SEC
-) -> float:
-    """取得每頁間隔秒數：robots.txt 的 Crawl-delay 與最小值取較大者。"""
+def crawl_delay_for(parser: RobotFileParser, user_agent: str = USER_AGENT) -> float:
+    """取得 robots.txt 宣告的 Crawl-delay 秒數，沒有宣告時回傳 0。"""
     declared = parser.crawl_delay(user_agent)
-    return max(minimum, float(declared or 0))
+    return float(declared or 0)
+
+
+def random_page_delay() -> float:
+    """每頁之間的隨機等待秒數（2～5 秒）。"""
+    return random.uniform(MIN_DELAY_SEC, MAX_DELAY_SEC)
 
 
 def _local_name(tag: str) -> str:
@@ -406,27 +411,32 @@ class RobotsBlockedError(Exception):
 
 
 class PoliteFetcher:
-    """有禮貌的抓取器：只發 GET、遵守 robots.txt、每個請求之間固定間隔。"""
+    """有禮貌的抓取器：只發 GET、遵守 robots.txt、每個請求之間隨機等待 2～5 秒。"""
 
     def __init__(
         self,
         session: HttpSession,
         site_url: str,
-        delay: float = MIN_DELAY_SEC,
         sleep: Callable[[float], None] = time.sleep,
+        random_delay: Callable[[], float] = random_page_delay,
     ) -> None:
-        """建立抓取器；delay 低於 1 秒會被拉回 1 秒。"""
+        """建立抓取器；random_delay 產生每次的隨機等待秒數（測試可替換）。"""
         self.session = session
         self.site_url = site_url.rstrip("/")
-        self.delay = max(MIN_DELAY_SEC, delay)
         self.sleep = sleep
+        self.random_delay = random_delay
+        self.crawl_delay = 0.0
         self.robots: RobotFileParser | None = None
         self._has_requested = False
 
+    def next_delay(self) -> float:
+        """下一次請求前要等待的秒數：隨機 2～5 秒，Crawl-delay 更長時以它為準。"""
+        return max(self.random_delay(), self.crawl_delay)
+
     def _get(self, url: str) -> HttpResponse:
-        """實際發出 GET；第二個請求起先等待 delay 秒，且不跟隨轉址。"""
+        """實際發出 GET；第二個請求起先等待 next_delay() 秒，且不跟隨轉址。"""
         if self._has_requested:
-            self.sleep(self.delay)
+            self.sleep(self.next_delay())
         self._has_requested = True
         return self.session.get(
             url,
@@ -436,7 +446,7 @@ class PoliteFetcher:
         )
 
     def load_robots(self) -> RobotFileParser:
-        """抓取並解析 robots.txt，同時依 Crawl-delay 調整間隔。"""
+        """抓取並解析 robots.txt，同時記下 Crawl-delay。"""
         robots_url = f"{self.site_url}/robots.txt"
         try:
             response = self._get(robots_url)
@@ -444,7 +454,7 @@ class PoliteFetcher:
         except requests.RequestException:
             parser = build_robot_parser(None, "")
         self.robots = parser
-        self.delay = crawl_delay_for(parser, minimum=self.delay)
+        self.crawl_delay = crawl_delay_for(parser)
         return parser
 
     def fetch(self, url: str) -> HttpResponse:
@@ -509,16 +519,19 @@ def run_audit(
     session: HttpSession,
     site_url: str = DEFAULT_SITE,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
-    delay: float = MIN_DELAY_SEC,
     limit: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     log: Callable[[str], None] = print,
+    random_delay: Callable[[], float] = random_page_delay,
 ) -> tuple[list[PageResult], list[str]]:
     """執行完整快速健檢並寫出 CSV 與孤兒頁清單，回傳 (檢查結果, 孤兒頁)。"""
     site_url = site_url.rstrip("/")
-    fetcher = PoliteFetcher(session, site_url, delay=delay, sleep=sleep)
+    fetcher = PoliteFetcher(session, site_url, sleep=sleep, random_delay=random_delay)
     fetcher.load_robots()
-    log(f"robots.txt 已讀取，每頁間隔 {fetcher.delay:g} 秒")
+    message = f"robots.txt 已讀取，每頁隨機間隔 {MIN_DELAY_SEC:g}～{MAX_DELAY_SEC:g} 秒"
+    if fetcher.crawl_delay > MIN_DELAY_SEC:
+        message += f"（Crawl-delay {fetcher.crawl_delay:g} 秒，較長時以它為準）"
+    log(message)
 
     sitemap_urls = collect_sitemap_urls(fetcher, f"{site_url}/sitemap.xml")
     targets = select_targets(sitemap_urls, site_url)
@@ -545,14 +558,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="炘馳通訊快速健檢（只讀）")
     parser.add_argument("--site", default=DEFAULT_SITE, help="網站網址")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="輸出資料夾")
-    parser.add_argument("--delay", type=float, default=MIN_DELAY_SEC, help="每頁間隔秒數（最少 1 秒）")
     parser.add_argument("--limit", type=int, default=None, help="只檢查前 N 頁（試跑用）")
     args = parser.parse_args(argv)
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     with requests.Session() as session:
-        run_audit(session, args.site, args.output_dir, args.delay, args.limit)
+        run_audit(session, args.site, args.output_dir, args.limit)
     return 0
 
 

@@ -70,3 +70,18 @@ def test_gitignore_protects_secrets() -> None:
     lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ".env" in lines
     assert "credentials/" in lines
+
+
+def test_gitignore_excludes_admin_output_and_backups() -> None:
+    """.gitignore 擋住後台探索輸出 research/admin/ 與 backups/。"""
+    lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "research/admin/" in lines
+    assert "backups/" in lines
+
+
+def test_xinchi_tools_path_from_env_file(tmp_path: Path) -> None:
+    """XINCHI_TOOLS_PATH 可從 .env 讀到，沒設定時用預設路徑。"""
+    env_file = tmp_path / ".env"
+    env_file.write_text("XINCHI_TOOLS_PATH=D:\\tools\\xinchi\n", encoding="utf-8")
+    assert load_settings(env_file).xinchi_tools_path == Path("D:\\tools\\xinchi")
+    assert Settings().xinchi_tools_path == Path(r"C:\Users\ycc\Desktop\xinchi-tools-main")

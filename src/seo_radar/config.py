@@ -23,6 +23,7 @@ class Settings:
     smtp_user: str = ""
     smtp_password: str = field(default="", repr=False)
     report_to: tuple[str, ...] = ()
+    xinchi_tools_path: Path = Path(r"C:\Users\ycc\Desktop\xinchi-tools-main")
 
 
 def load_settings(env_file: str | Path | None = ".env") -> Settings:
@@ -56,4 +57,5 @@ def load_settings(env_file: str | Path | None = ".env") -> Settings:
         smtp_user=os.environ.get("SMTP_USER", "").strip(),
         smtp_password=os.environ.get("SMTP_PASSWORD", "").strip(),
         report_to=report_to,
+        xinchi_tools_path=Path(get("XINCHI_TOOLS_PATH", defaults.xinchi_tools_path)),
     )

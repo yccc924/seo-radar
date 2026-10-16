@@ -13,6 +13,19 @@
 
 ---
 
+## 2026-10-16｜Claude Code｜scripts/admin_explore.py（後台唯讀探索第一步）的幾個選擇
+使用者要求的任務（不在任務清單上），規格沒寫明的地方這樣處理：
+- **cookie 格式**：沒有權限讀 `elevated_cookies.py` 原始碼，所以 `to_playwright_cookies` 同時接受 `{name: value}`、dict 清單、有 name/value 屬性的物件；只留 `cyberbiz.co` 網域，且不帶 `expires`（瀏覽器關閉即失效）。第一次實跑若格式不符，會停在「沒有取得 cookie」或「注入 cookie 失敗」，不會印出內容。
+- **左側選單怎麼找**：還沒看過 Cyberbiz 後台的 HTML，先用 id/class 含 `sidebar`、`side-menu`、`sidenav` 等線索的元素，其次 `<aside>`、`<nav>`，同分取連結最多的；都找不到就用整頁連結並在終端機提示。第一次實跑後要人工看一下 `menu.csv` 是否正確。
+- **停止條件多加幾項（保守）**：401、其他非預期的 4xx、載入逾時或失敗、被導到後台以外的網址，也一律立即停止不重試。
+- **驗證碼偵測**用字串比對（`recaptcha`、`captcha`、`驗證碼` 等）；若後台每頁都內嵌 reCAPTCHA 腳本會造成誤停，屆時再調整。
+- **敏感路徑過濾器**除了訂單、會員、金流，也排除登出（`logout`、`sign_out`）與 `delete`、`destroy`，因為用 GET 開登出網址就會把帳號登出。
+- **續傳**：404 的頁面也算「處理過」，下次不再重試；要重讀首頁請刪除 `research/admin/progress.json`。
+- 終端機訊息同時寫到 `research/admin/explore.log`（已在 .gitignore）；任何例外只顯示例外類型，不顯示訊息，避免夾帶 cookie。
+
+## 2026-10-16｜Claude Code｜quick_audit.py 改為隨機等待 2～5 秒
+依 CLAUDE.md 規則，每頁間隔改為 `random.uniform(2.0, 5.0)`，robots.txt 的 Crawl-delay 更長時以它為準。原本的 `--delay` 參數拿掉了，避免有人設成低於 2 秒。
+
 ## 2026-10-16｜Claude Code｜scripts/quick_audit.py 的幾個選擇
 使用者要求的一次性只讀檢查腳本（不在任務清單上），規格沒寫明的地方這樣處理：
 - robots.txt 讀不到（5xx 或連線失敗）時整站不爬；404 視為全允許；Crawl-delay 若大於 1 秒以它為準。

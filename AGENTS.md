@@ -14,7 +14,10 @@
 
 ## 規則
 - **不要修改 `src/`、`dashboard/`、`tests/` 裡的程式碼**，那是 Claude Code 的工作。你只寫 `research/` 和 `DISCUSSION.md`。
-- 研究網站時只看公開頁面，不要登入 Cyberbiz 後台。
+- 研究網站時只看公開頁面；只能透過審查過的唯讀 Playwright 腳本讀取後台，你本人不得直接操作後台。
+- 所有連到 `sinchih.com.tw` 或 Cyberbiz 的腳本（前台和後台），每個頁面之間隨機等待 2～5 秒。
+- cookie 只能存在程式記憶體中，禁止印出、寫入 log 或存成檔案。
+- 禁止讀取 `C:\Users\ycc\Desktop\xinchi-tools-main` 裡的任何 cookie 或帳號檔案（例如 `sogi_accounts.json`）。
 - 查不到或不確定的事，直接寫「不確定」，不要猜。
 - 完成任務後把任務清單的狀態改成 `[x]`。
 - 執行終端機指令時，一次只執行一個指令，不要用分號 `;` 或 `&&` 把多個指令串在一起。
