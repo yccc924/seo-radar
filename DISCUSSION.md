@@ -13,6 +13,21 @@
 
 ---
 
+## 2026-10-16｜agy｜審查 scripts/admin_explore.py（--lists 列表頁模式）通過
+審查 `scripts/admin_explore.py` 與 `tests/test_admin_explore.py`（共 240 項 pytest 測試全數通過）：
+- **唯讀與請求攔截（無問題）**：選單模式與列表頁模式共用 `_run_with_page`，在開啟任何頁面前即註冊 `page.route("**/*", guard.handle)`，僅放行 `GET`，其餘 HTTP 方法一律 `route.abort()`。`sync_form_values` 僅在本地 DOM 將欄位 property 同步至 attribute 供 `page.content()` 讀取，不觸發任何表單送出或網路請求。
+- **範圍與分頁限制（無問題）**：僅讀取指定的 9 個列表頁（並支援從 `menu.csv` 讀取「商品標籤管理」網址 `https://sinchih.cyberbiz.co/admin/product_tags`），分頁僅跟隨同路徑 `?page=N`（N≥2），不進入 `/edit`、`/new` 或單一項目子路徑，且單次執行上限強制鎖定 `MAX_LIST_PAGES = 50` 頁。
+- **Cookie 與敏感資訊遮蔽（無問題）**：cookie 注入後立即 `cookies.clear()`，不印出、不寫檔；輸出 Markdown 前透過 `mask_sensitive` 與 `mask_field_value` 將 email、市話、手機、API 金鑰、secret、token 遮蔽為 `***`，同時保留 `G-`、`GTM-` 追蹤 ID 與站內路徑。
+
+## 2026-10-16｜Claude Code｜admin_explore.py 新增 --lists（讀 9 個列表頁）的幾個選擇
+使用者要求的任務（不在任務清單上），規格沒寫明的地方這樣處理：
+- **分頁判定很嚴格**：只接受同一路徑、query 只有 `page=N`（N≥2）的連結；`?page=2&sort=…`、子路徑（如 `/blogs/12/articles?page=2`）一律不跟。若實跑發現 Cyberbiz 分頁帶其他參數，再放寬。
+- **主內容區怎麼找**：先找 `<main>`／`role=main`，其次 id/class 為 `content-wrapper`、`main-content`、`page-content` 等的元素（取文字最多、且不含左側選單者），都找不到才用整頁並移除 `<header>`、`<nav>` 與選單。第一次實跑後要人工看一下輸出的 .md 是否混進選單文字。
+- **表單欄位值**：讀 HTML 前用 `page.evaluate` 把欄位目前的值寫回 HTML 屬性（只改瀏覽器裡的 DOM，不送出、不發請求），否則 Vue/JS 填的值在 `page.content()` 看不到。隱藏欄位、密碼、按鈕與 CSRF token 不輸出。
+- **遮蔽規則**：email、台灣手機與市話、`API Key:`／`token=` 這類寫法的值、常見金鑰格式（`AIza…`、`sk_live_…`）、32 字元以上英數混合長字串，以及欄位名稱或標籤含 key/secret/token/password/金鑰/密碼的欄位值，一律換成 `***`。`G-`、`GTM-`、`UA-`、`AW-` 追蹤 ID 與網址路徑不遮，網址只遮 query 中的敏感值。保守起見，以 0 開頭、8～10 位的數字（例如某些商品編號）也可能被當成電話遮掉。
+- **續傳的限制**：分頁網址是讀第 1 頁時才發現的；若上次讀完第 1 頁就中斷，下次第 1 頁會被跳過，後面的分頁也就不會讀到。要完整重讀請刪除 `research/admin/progress.json`（第 1 頁會重寫整個主題檔，分頁接在後面）。
+- 列表頁模式與選單模式共用同一個 `progress.json`。
+
 ## 2026-10-16｜Claude Code｜scripts/admin_explore.py（後台唯讀探索第一步）的幾個選擇
 使用者要求的任務（不在任務清單上），規格沒寫明的地方這樣處理：
 - **cookie 格式**：沒有權限讀 `elevated_cookies.py` 原始碼，所以 `to_playwright_cookies` 同時接受 `{name: value}`、dict 清單、有 name/value 屬性的物件；只留 `cyberbiz.co` 網域，且不帶 `expires`（瀏覽器關閉即失效）。第一次實跑若格式不符，會停在「沒有取得 cookie」或「注入 cookie 失敗」，不會印出內容。

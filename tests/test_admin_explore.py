@@ -577,6 +577,513 @@ class TestMenu:
 
 
 # ---------------------------------------------------------------------------
+# 列表頁模式（--lists）
+# ---------------------------------------------------------------------------
+
+
+LIST_HTML = f"""<html><body>
+<nav class="navbar"><a href="/admin/profile">頂部個人設定</a><span>頂部導覽</span></nav>
+<div id="wrapper">
+<aside class="sidebar"><ul><li><a href="/admin/products">側欄商品</a></li></ul></aside>
+<div class="content-wrapper">
+  <h2>谷歌 Google 設定</h2>
+  <p>聯絡 Boss.Lin@sinchih.com.tw 或 0912-345-678，市話 (02)2345-6789</p>
+  <form>
+    <input type="hidden" name="authenticity_token" value="{SECRET}">
+    <div class="form-group"><label for="ga">GA4 衡量 ID</label><input id="ga" name="shop[ga4_id]" value="G-ABC123XYZ9"></div>
+    <label>GTM 容器 <input name="shop[gtm_id]" value="GTM-ABCD123"></label>
+    <div class="form-group"><label>API 金鑰</label><input name="shop[api_key]" value="plainkey"></div>
+    <input type="password" name="pw" value="{SECRET}">
+    <select name="shop[mode]"><option value="a">關閉</option><option value="b" selected>開啟</option></select>
+    <input type="checkbox" name="shop[enabled]" checked>
+    <textarea name="shop[note]" placeholder="備註">店長電話 02-2345-6789</textarea>
+    <button type="submit">儲存</button>
+  </form>
+  <table>
+    <thead><tr><th>原網址</th><th>新網址</th><th>操作</th></tr></thead>
+    <tbody>
+      <tr><td>/old-a</td><td><a href="/pages/new-a">新 A</a></td><td><a href="/admin/redirections/12/edit">編輯</a></td></tr>
+      <tr><td>a|b</td><td><a href="https://www.sinchih.com.tw/blogs/news?token=abcdef">文章</a></td><td></td></tr>
+    </tbody>
+  </table>
+  <ul><li>第一項<ul><li>子項</li></ul></li><li><a href="/admin/menus">主選單</a></li></ul>
+  <ul class="pagination"><li><a href="?page=2">2</a></li></ul>
+</div></div>
+<script>var token="{SECRET}";</script>
+</body></html>"""
+
+BLOGS = f"{ADMIN}/admin/blogs"
+PRODUCT_TAGS = f"{ADMIN}/admin/product_tags"
+
+
+def simple_list_html(extra: str = "") -> str:
+    """有左側選單與 <main> 的簡單列表頁。"""
+    return (
+        '<html><body><aside class="sidebar"><a href="/admin/orders">訂單</a></aside>'
+        f"<main><h2>列表</h2><table><tr><th>名稱</th></tr><tr><td>項目</td></tr></table>{extra}</main></body></html>"
+    )
+
+
+BLOGS_PAGE_1 = simple_list_html(
+    '<a href="?page=2">2</a><a href="/admin/blogs?page=3">3</a>'
+    '<a href="/admin/blogs/12/edit">編輯</a><a href="/admin/blogs/new">新增</a>'
+    '<a href="/admin/blogs?page=2&sort=asc">排序</a><a href="/admin/blogs/12/articles?page=2">文章</a>'
+    '<a href="/admin/orders?page=2">訂單</a><a href="https://other.com/admin/blogs?page=2">外站</a>'
+)
+BLOGS_PAGE_2 = simple_list_html('<a href="/admin/blogs">1</a><a href="?page=3">3</a>')
+
+
+def collect_outputs(tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture) -> str:
+    """收集終端機輸出、log 與 tmp_path 底下所有檔案內容。"""
+    captured = capsys.readouterr()
+    files = "".join(p.read_text(encoding="utf-8-sig") for p in tmp_path.rglob("*") if p.is_file())
+    return captured.out + captured.err + caplog.text + files
+
+
+def run_lists(tmp_path: Path, page: FakePage, **kwargs: Any) -> Any:
+    """以假瀏覽器執行列表頁模式。"""
+    return ae.explore_lists(FakeBrowser(FakeContext(page)), fake_get_cookies, tmp_path, sleep=no_sleep, **kwargs)
+
+
+class TestMaskSensitive:
+    """email、電話、金鑰、token 遮蔽；追蹤 ID 與站內路徑保留。"""
+
+    @pytest.mark.parametrize(
+        "text, secret",
+        [
+            ("聯絡 Boss.Lin@sinchih.com.tw 謝謝", "Boss.Lin@sinchih.com.tw"),
+            ("手機 0912-345-678", "0912-345-678"),
+            ("手機 0912 345 678", "0912 345 678"),
+            ("電話0912345678", "0912345678"),
+            ("國際 +886-912-345-678", "+886-912-345-678"),
+            ("市話 02-2345-6789", "02-2345-6789"),
+            ("市話 (02)2345-6789。", "(02)2345-6789"),
+            ("市話 +886-2-2345-6789", "+886-2-2345-6789"),
+            ("高雄 07-123-4567", "07-123-4567"),
+            ("API Key: abcd1234", "abcd1234"),
+            ("token=xyz987", "xyz987"),
+            ("client_secret：s3cr3t", "s3cr3t"),
+            ("金鑰：mykey", "mykey"),
+            ("key AIzaSyA1234567890abcdefghijklmnopq", "AIzaSyA1234567890abcdefghijklmnopq"),
+            ("長字串 " + "a1" * 20, "a1" * 20),
+            ("sk_live_abcdef123456", "sk_live_abcdef123456"),
+            (f"{ADMIN}/admin/x?token=abc123&page=2", "abc123"),
+            ("/admin/x?email=a%40b.com", "a%40b.com"),
+            ("mailto:boss@example.com", "boss@example.com"),
+        ],
+    )
+    def test_masked(self, text: str, secret: str) -> None:
+        """敏感資料被換成 ***。"""
+        masked = ae.mask_sensitive(text)
+        assert secret not in masked
+        assert "***" in masked
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "GA4 衡量 ID：G-ABC123XYZ9",
+            "GTM 容器 GTM-ABCD123",
+            "舊版 UA-12345678-1",
+            "Google Ads AW-123456789",
+            f"{ADMIN}/admin/platforms/google",
+            f"{ADMIN}/admin/blogs?page=2",
+            "/admin/products/0912345678",
+            "https://www.sinchih.com.tw/pages/%E4%BE%86%E8%A8%AA",
+            "價格 NT$12,000，共 3 筆",
+            "更新於 2026-10-16T12:00:00",
+            "[新 A](https://sinchih.cyberbiz.co/pages/new-a)",
+        ],
+    )
+    def test_preserved(self, text: str) -> None:
+        """追蹤 ID、站內網址路徑、價格與日期不會被誤遮。"""
+        assert ae.mask_sensitive(text) == text
+
+    def test_field_value_masked_by_name_or_label(self) -> None:
+        """欄位名稱或標籤像金鑰、secret、token 時整個值遮蔽，但追蹤 ID 保留。"""
+        assert ae.mask_field_value("shop[api_key]", "", "plain") == "***"
+        assert ae.mask_field_value("x", "Access Token", "plain") == "***"
+        assert ae.mask_field_value("x", "API 金鑰", "plain") == "***"
+        assert ae.mask_field_value("shop[gtm_token]", "", "GTM-ABCD123") == "GTM-ABCD123"
+        assert ae.mask_field_value("shop[name]", "店名", "炘馳通訊") == "炘馳通訊"
+        assert ae.mask_field_value("shop[phone]", "電話", "02-2345-6789") == "***"
+        assert ae.mask_field_value("shop[secret]", "", "") == ""
+
+
+class TestListTargets:
+    """列表頁網址清單與 menu.csv 的「標籤管理」。"""
+
+    def test_default_targets(self) -> None:
+        """固定 9 個列表頁，都是後台網域、非敏感、非單一項目。"""
+        targets = ae.list_targets(None)
+        assert len(targets) == 9
+        assert targets[0] == f"{ADMIN}/admin/platforms/google"
+        assert targets[-1] == PRODUCT_TAGS
+        assert f"{ADMIN}/admin/custom_pages_index" in targets
+        for url in targets:
+            assert ae.is_admin_url(url)
+            assert not ae.is_sensitive(url)
+            assert not ae.looks_like_single_item(url)
+            assert ae.list_page_number(url) == 1
+
+    def _write_menu(self, path: Path, rows: list[tuple[str, str]]) -> Path:
+        """寫一個 menu.csv。"""
+        with path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["text", "url"])
+            writer.writerows(rows)
+        return path
+
+    def test_tag_url_from_menu(self, tmp_path: Path) -> None:
+        """menu.csv 有「標籤管理」的網址時取代預設的商品標籤管理。"""
+        menu = self._write_menu(tmp_path / "menu.csv", [("商品", f"{ADMIN}/admin/products"), ("商品標籤管理", f"{ADMIN}/admin/tags_v2")])
+        targets = ae.list_targets(menu)
+        assert targets[-1] == f"{ADMIN}/admin/tags_v2"
+        assert PRODUCT_TAGS not in targets
+        assert len(targets) == 9
+
+    def test_menu_same_as_default(self, tmp_path: Path) -> None:
+        """menu.csv 的網址與預設相同時清單不變。"""
+        menu = self._write_menu(tmp_path / "menu.csv", [("商品標籤管理", PRODUCT_TAGS)])
+        assert ae.list_targets(menu) == list(ae.LIST_PAGE_URLS)
+
+    @pytest.mark.parametrize(
+        "url",
+        [f"{ADMIN}/admin/product_tags/5/edit", f"{ADMIN}/admin/product_tags/new", "https://other.com/admin/tags", f"{ADMIN}/admin/orders/tags"],
+    )
+    def test_invalid_menu_url_ignored(self, url: str, tmp_path: Path) -> None:
+        """menu.csv 裡的網址若是單一項目、外站或敏感頁面就不採用。"""
+        menu = self._write_menu(tmp_path / "menu.csv", [("商品標籤管理", url)])
+        assert ae.list_targets(menu) == list(ae.LIST_PAGE_URLS)
+
+    def test_missing_menu(self, tmp_path: Path) -> None:
+        """沒有 menu.csv 時用預設清單。"""
+        assert ae.list_targets(tmp_path / "missing.csv") == list(ae.LIST_PAGE_URLS)
+
+
+class TestPagination:
+    """分頁判斷與主題檔名。"""
+
+    @pytest.mark.parametrize(
+        "url, expected",
+        [
+            (f"{BLOGS}?page=2", True),
+            (f"{BLOGS}?page=10", True),
+            (f"{BLOGS}?page=2#top", True),
+            (BLOGS, False),
+            (f"{BLOGS}?page=1", False),
+            (f"{BLOGS}?page=0", False),
+            (f"{BLOGS}?page=x", False),
+            (f"{BLOGS}?page=2&sort=asc", False),
+            (f"{BLOGS}?sort=asc", False),
+            (f"{BLOGS}/12?page=2", False),
+            (f"{BLOGS}/12/edit", False),
+            (f"{ADMIN}/admin/blogs_v2?page=2", False),
+            ("https://other.com/admin/blogs?page=2", False),
+            (f"http://{ae.ADMIN_HOST}/admin/blogs?page=2", False),
+        ],
+    )
+    def test_is_pagination_url(self, url: str, expected: bool) -> None:
+        """只有同一路徑、query 只有 page=N（N≥2）才算分頁。"""
+        assert ae.is_pagination_url(url, BLOGS) is expected
+
+    def test_page_number(self) -> None:
+        """沒有 query 是第 1 頁；page=N 是第 N 頁；其他 None。"""
+        assert ae.list_page_number(BLOGS) == 1
+        assert ae.list_page_number(f"{BLOGS}?page=3") == 3
+        assert ae.list_page_number(f"{BLOGS}?q=a") is None
+
+    def test_pagination_links(self) -> None:
+        """只收分頁連結；單一項目、新增、其他 query、子路徑、敏感頁、外站都不收。"""
+        assert ae.pagination_links(BLOGS_PAGE_1, BLOGS, BLOGS) == [f"{BLOGS}?page=2", f"{BLOGS}?page=3"]
+
+    @pytest.mark.parametrize(
+        "url, topic",
+        [
+            (f"{ADMIN}/admin/platforms/google", "platforms_google"),
+            (f"{ADMIN}/admin/custom_pages_index", "custom_pages_index"),
+            (f"{ADMIN}/admin/shop_add_ons", "shop_add_ons"),
+            (f"{BLOGS}?page=2", "blogs"),
+        ],
+    )
+    def test_topic_name(self, url: str, topic: str) -> None:
+        """主題檔名由路徑轉成。"""
+        assert ae.list_topic_name(url) == topic
+
+    @pytest.mark.parametrize(
+        "url, expected",
+        [(f"{BLOGS}/12/edit", True), (f"{BLOGS}/new", True), (f"{BLOGS}/12", True), (BLOGS, False), (f"{ADMIN}/admin/platforms/google", False)],
+    )
+    def test_single_item(self, url: str, expected: bool) -> None:
+        """/edit、/new、數字編號判定為單一項目。"""
+        assert ae.looks_like_single_item(url) is expected
+
+
+class TestListContent:
+    """主內容區整理成 Markdown。"""
+
+    def _render(self) -> str:
+        """整理 LIST_HTML 第 1 頁。"""
+        url = f"{ADMIN}/admin/platforms/google"
+        return ae.render_list_page(LIST_HTML, url, url, 1)
+
+    def test_excludes_sidebar_topnav_and_scripts(self) -> None:
+        """左側選單、頂部導覽列、script、隱藏欄位與密碼都不出現。"""
+        md = self._render()
+        assert "側欄商品" not in md
+        assert "頂部導覽" not in md and "頂部個人設定" not in md
+        assert SECRET not in md
+        assert "authenticity_token" not in md
+        assert "| pw |" not in md
+        assert "儲存" not in md
+
+    def test_headings_and_paragraphs(self) -> None:
+        """區塊標題與段落保留，段落中的 email 與電話被遮蔽。"""
+        md = self._render()
+        assert md.startswith("## 第 1 頁")
+        assert "#### 谷歌 Google 設定" in md
+        assert "聯絡 *** 或 ***，市話 ***" in md
+        assert "Boss.Lin" not in md and "0912-345-678" not in md and "2345-6789" not in md
+
+    def test_form_fields(self) -> None:
+        """表單欄位輸出標籤、name、類型與目前的值；GA4/GTM ID 保留、金鑰遮蔽。"""
+        md = self._render()
+        assert "| 標籤 | name | 類型 | 目前的值 |" in md
+        assert "| GA4 衡量 ID | shop[ga4_id] | text | G-ABC123XYZ9 |" in md
+        assert "| GTM 容器 | shop[gtm_id] | text | GTM-ABCD123 |" in md
+        assert "| API 金鑰 | shop[api_key] | text | *** |" in md
+        assert "plainkey" not in md
+        assert "| shop[mode] | select | 開啟 |" in md
+        assert "| shop[enabled] | checkbox | 已勾選 |" in md
+        assert "| 備註 | shop[note] | textarea | 店長電話 *** |" in md
+
+    def test_table(self) -> None:
+        """表格轉成 Markdown，保留文字與連結 href，| 被跳脫，網址中的 token 被遮蔽。"""
+        md = self._render()
+        assert "| 原網址 | 新網址 | 操作 |" in md
+        assert "| --- | --- | --- |" in md
+        assert (
+            f"| /old-a | [新 A]({ADMIN}/pages/new-a) | [編輯]({ADMIN}/admin/redirections/12/edit) |" in md
+        )
+        assert "| a\\|b | [文章](https://www.sinchih.com.tw/blogs/news?token=***) |  |" in md
+        assert "abcdef" not in md
+
+    def test_lists(self) -> None:
+        """清單（含巢狀）轉成 Markdown；分頁清單不列出。"""
+        md = self._render()
+        assert "- 第一項" in md
+        assert "  - 子項" in md
+        assert f"- [主選單]({ADMIN}/admin/menus)" in md
+        assert "- [2](" not in md
+
+    def test_table_without_header(self) -> None:
+        """沒有標題列的表格用「欄1、欄2」。"""
+        soup = ae.BeautifulSoup("<table><tr><td>a</td><td>b</td></tr></table>", "html.parser")
+        lines = ae.table_to_markdown(soup.find("table"), ae.ADMIN_HOME)
+        assert lines == ["| 欄1 | 欄2 |", "| --- | --- |", "| a | b |"]
+
+    def test_empty_page(self) -> None:
+        """主內容區沒東西時寫一行說明。"""
+        md = ae.render_list_page("<html></html>", BLOGS, BLOGS, 1)
+        assert "沒有可整理" in md
+
+    def test_redirected_page_notes_final_url(self) -> None:
+        """實際網址不同時記下來。"""
+        md = ae.render_list_page(simple_list_html(), BLOGS, f"{BLOGS}/1/articles", 1)
+        assert f"- 實際網址：{BLOGS}/1/articles" in md
+
+    def test_write_list_page(self, tmp_path: Path) -> None:
+        """第 1 頁重寫整個主題檔，之後的分頁接在同一檔案後面。"""
+        path = tmp_path / "blogs.md"
+        path.write_text("舊內容", encoding="utf-8")
+        assert ae.write_list_page(tmp_path, BLOGS, 1, "## 第 1 頁\n") == path
+        ae.write_list_page(tmp_path, BLOGS, 2, "## 第 2 頁\n")
+        text = path.read_text(encoding="utf-8")
+        assert "舊內容" not in text
+        assert text.startswith("# 後台列表：blogs")
+        assert text.index("## 第 1 頁") < text.index("## 第 2 頁")
+
+
+class TestExploreLists:
+    """列表頁模式完整流程。"""
+
+    def test_reads_targets_and_pagination_only(self, tmp_path: Path) -> None:
+        """依序讀 9 個列表頁，再讀分頁；不點進 /edit、/new 或其他網址；分頁合併在同一檔。"""
+        targets = list(ae.LIST_PAGE_URLS)
+        page = FakePage(
+            {
+                BLOGS: (200, BLOGS_PAGE_1, BLOGS),
+                f"{BLOGS}?page=2": (200, BLOGS_PAGE_2, f"{BLOGS}?page=2"),
+            },
+            default_html=simple_list_html(),
+        )
+        sleeps: list[float] = []
+        result = ae.explore_lists(FakeBrowser(FakeContext(page)), fake_get_cookies, tmp_path, sleep=sleeps.append)
+        assert result.finished
+        assert page.goto_calls == targets + [f"{BLOGS}?page=2", f"{BLOGS}?page=3"]
+        assert not any("/edit" in u or "/new" in u or "orders" in u for u in page.goto_calls)
+        assert len(sleeps) == len(page.goto_calls) - 1
+        assert all(2.0 <= s <= 5.0 for s in sleeps)
+
+        for url in targets:
+            assert (tmp_path / f"{ae.list_topic_name(url)}.md").is_file()
+        assert (tmp_path / "platforms_google.md").is_file()
+        assert (tmp_path / "custom_pages_index.md").is_file()
+        blogs = (tmp_path / "blogs.md").read_text(encoding="utf-8")
+        assert blogs.index("## 第 1 頁") < blogs.index("## 第 2 頁") < blogs.index("## 第 3 頁")
+        assert "| 名稱 |" in blogs
+
+        saved = json.loads((tmp_path / "progress.json").read_text(encoding="utf-8"))
+        assert saved["visited_urls"] == page.goto_calls
+
+    def test_max_list_pages(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """分頁再多，本次最多讀 50 頁（傳更大的上限也一樣）。"""
+        assert ae.MAX_LIST_PAGES == 50
+        pages: dict[str, tuple[int, str, str]] = {PRODUCT_TAGS: (200, simple_list_html('<a href="?page=2">2</a>'), PRODUCT_TAGS)}
+        for n in range(2, 101):
+            url = f"{PRODUCT_TAGS}?page={n}"
+            pages[url] = (200, simple_list_html(f'<a href="?page={n + 1}">下一頁</a>'), url)
+        page = FakePage(pages, default_html=simple_list_html())
+        result = run_lists(tmp_path, page, max_pages=100)
+        assert len(page.goto_calls) == 50
+        assert result.stop_page == 50
+        assert "50" in result.reason
+        assert not result.finished
+        assert "停在第 50 頁" in capsys.readouterr().out
+        assert "## 第 41 頁" in (tmp_path / "product_tags.md").read_text(encoding="utf-8")
+
+    def test_resume_skips_read_pages(self, tmp_path: Path) -> None:
+        """已讀過的列表頁下次執行不再開啟。"""
+        run_lists(tmp_path, FakePage(default_html=simple_list_html()))
+        page = FakePage()
+        result = run_lists(tmp_path, page)
+        assert page.goto_calls == []
+        assert "沒有待讀頁面" in result.reason
+
+    @pytest.mark.parametrize("status", [429, 403, 500, 503])
+    def test_stop_on_status(self, status: int, tmp_path: Path) -> None:
+        """第 4 頁回 429/403/5xx 立即停止，不重試。"""
+        targets = list(ae.LIST_PAGE_URLS)
+        page = FakePage({targets[3]: (status, "", targets[3])}, default_html=simple_list_html())
+        result = run_lists(tmp_path, page)
+        assert page.goto_calls == targets[:4]
+        assert result.reason == f"HTTP {status}"
+        assert not (tmp_path / f"{ae.list_topic_name(targets[3])}.md").exists()
+
+    def test_stop_on_login_and_captcha(self, tmp_path: Path) -> None:
+        """被導回登入頁或出現驗證碼立即停止。"""
+        targets = list(ae.LIST_PAGE_URLS)
+        page = FakePage({targets[0]: (200, "<form></form>", f"{ADMIN}/admins/sign_in")})
+        assert "登入頁" in run_lists(tmp_path / "a", page).reason
+        assert page.goto_calls == targets[:1]
+        page2 = FakePage({targets[1]: (200, '<div class="g-recaptcha"></div>', targets[1])}, default_html=simple_list_html())
+        assert run_lists(tmp_path / "b", page2).reason == "頁面出現驗證碼"
+        assert page2.goto_calls == targets[:2]
+
+    def test_stop_on_three_404(self, tmp_path: Path) -> None:
+        """連續 3 頁 404 立即停止。"""
+        targets = list(ae.LIST_PAGE_URLS)
+        page = FakePage({u: (404, "", u) for u in targets[:3]})
+        result = run_lists(tmp_path, page)
+        assert page.goto_calls == targets[:3]
+        assert "連續 3 頁" in result.reason
+
+    def test_tag_url_from_menu_csv(self, tmp_path: Path) -> None:
+        """自動讀 output_dir/menu.csv 裡含「標籤管理」的網址。"""
+        tags = f"{ADMIN}/admin/tags_v2"
+        ae.write_menu_csv([ae.MenuLink("商品標籤管理", tags)], tmp_path / "menu.csv")
+        page = FakePage(default_html=simple_list_html())
+        run_lists(tmp_path, page)
+        assert page.goto_calls[-1] == tags
+        assert PRODUCT_TAGS not in page.goto_calls
+        assert (tmp_path / "tags_v2.md").is_file()
+
+    def test_get_only_guard_and_cookie_secrecy(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """列表頁模式同樣只放行 GET，cookie 與 CSRF token 不出現在任何輸出。"""
+        caplog.set_level(logging.INFO, logger="admin_explore")
+        page = FakePage({ae.LIST_PAGE_URLS[0]: (200, LIST_HTML, ae.LIST_PAGE_URLS[0])}, default_html=simple_list_html())
+        context = FakeContext(page)
+        result = ae.explore_lists(FakeBrowser(context), fake_get_cookies, tmp_path, sleep=no_sleep)
+        assert result.finished
+        assert page.goto_calls[-1] == f"{ae.LIST_PAGE_URLS[0]}?page=2"
+        assert [pattern for pattern, _ in page.routes] == ["**/*"]
+        post = FakeRoute("POST", f"{ADMIN}/admin/platforms/google")
+        page.routes[0][1](post)
+        assert post.action == "abort"
+        assert context.cookies and context.cookies[0]["value"] == SECRET
+        assert context.closed
+        outputs = collect_outputs(tmp_path, capsys, caplog)
+        assert SECRET not in outputs
+        assert "Boss.Lin@sinchih.com.tw" not in outputs
+        assert "G-ABC123XYZ9" in outputs
+
+    def test_no_cookies_stops(self, tmp_path: Path) -> None:
+        """取不到 cookie 就不開頁面。"""
+        page = FakePage()
+        result = ae.explore_lists(FakeBrowser(FakeContext(page)), lambda d: [], tmp_path, sleep=no_sleep)
+        assert "cookie" in result.reason
+        assert page.goto_calls == []
+
+    def test_form_values_synced_before_reading(self, tmp_path: Path) -> None:
+        """每頁讀 HTML 前先同步表單欄位值；同步失敗不影響讀取。"""
+
+        class EvalPage(FakePage):
+            """有 evaluate 的假分頁。"""
+
+            def __init__(self, fail: bool = False, **kwargs: Any):
+                """fail=True 時 evaluate 丟出例外。"""
+                super().__init__(**kwargs)
+                self.fail = fail
+                self.scripts: list[str] = []
+
+            def evaluate(self, script: str) -> None:
+                """記錄執行的腳本。"""
+                self.scripts.append(script)
+                if self.fail:
+                    raise RuntimeError(f"boom {SECRET}")
+
+        page = EvalPage(default_html=simple_list_html())
+        run_lists(tmp_path / "a", page)
+        assert page.scripts == [ae.SYNC_FORM_VALUES_JS] * 9
+
+        failing = EvalPage(fail=True, default_html=simple_list_html())
+        result = run_lists(tmp_path / "b", failing)
+        assert result.finished
+        assert len(failing.goto_calls) == 9
+
+    def test_sync_without_evaluate(self) -> None:
+        """分頁物件沒有 evaluate 時直接略過。"""
+        ae.sync_form_values(object())
+
+
+class TestCommandLine:
+    """命令列參數與模式切換。"""
+
+    @pytest.mark.parametrize(
+        "argv, mode",
+        [([], "menu"), (["--lists"], "lists"), (["--mode", "lists"], "lists"), (["--mode", "menu"], "menu")],
+    )
+    def test_parse_args(self, argv: list[str], mode: str) -> None:
+        """預設讀左側選單；--lists 或 --mode lists 讀列表頁。"""
+        assert ae.parse_args(argv) == mode
+
+    def test_invalid_mode(self) -> None:
+        """不認得的模式直接報錯。"""
+        with pytest.raises(SystemExit):
+            ae.parse_args(["--mode", "all"])
+
+    def test_run_mode(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """menu 呼叫 explore_admin，lists 呼叫 explore_lists。"""
+        calls: list[str] = []
+        monkeypatch.setattr(ae, "explore_admin", lambda *a, **k: calls.append("menu"))
+        monkeypatch.setattr(ae, "explore_lists", lambda *a, **k: calls.append("lists"))
+        ae.run_mode("menu", object(), fake_get_cookies, tmp_path)
+        ae.run_mode("lists", object(), fake_get_cookies, tmp_path)
+        assert calls == ["menu", "lists"]
+
+
+# ---------------------------------------------------------------------------
 # 其他
 # ---------------------------------------------------------------------------
 
