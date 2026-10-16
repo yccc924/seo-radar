@@ -1,0 +1,10 @@
+[project]
+name = "seo-radar"
+version = "0.1.0"
+description = "炘馳通訊 SEO 雷達：關鍵字機會、網站健檢、儀表板與週報"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

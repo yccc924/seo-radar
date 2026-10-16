@@ -1,0 +1,12 @@
+# 執行時依賴
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.0
+python-dotenv>=1.0
+google-api-python-client>=2.140
+google-auth>=2.30
+streamlit>=1.38
+pandas>=2.2
+
+# 開發與測試
+pytest>=8.3
