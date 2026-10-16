@@ -1057,15 +1057,585 @@ class TestExploreLists:
         ae.sync_form_values(object())
 
 
+# ---------------------------------------------------------------------------
+# 動態載入頁模式（--dynamic）：menus 與 custom_pages_index
+# ---------------------------------------------------------------------------
+
+
+MENUS = ae.MENUS_URL
+CUSTOM = ae.CUSTOM_PAGES_URL
+CUSTOM_ALT = ae.CUSTOM_PAGES_ALT_URL
+
+MENUS_HTML = """<html><body>
+<nav class="navbar"><a href="/admin/profile">頂部個人設定</a></nav>
+<aside class="sidebar"><ul>
+  <li><a href="/admin/products">側欄商品</a></li>
+  <li><a href="/admin/menus">側欄選單</a></li>
+</ul></aside>
+<main>
+  <h2>選單設定</h2>
+  <div class="panel"><div class="panel-heading">主選單</div>
+    <nav class="main-menu menu-editor"><ul>
+      <li><a href="/">首頁</a></li>
+      <li><a href="/collections/all">全部商品</a>
+        <ul><li><a href="/collections/phone">手機</a>
+          <ul><li><a href="/collections/iphone">iPhone</a></li></ul>
+        </li></ul>
+      </li>
+    </ul></nav>
+  </div>
+  <div class="panel"><div class="panel-heading">頁尾選單</div>
+    <ol class="dd-list">
+      <li class="dd-item" data-url="/pages/about"><div class="dd-handle">關於我們</div>
+        <ol class="dd-list"><li class="dd-item"><div class="dd-handle">聯絡我們</div><input name="menu[link_url]" value="/pages/contact"></li></ol>
+      </li>
+    </ol>
+  </div>
+  <div data-react-class="MenuEditor" data-react-props='{"menus":[{"title":"手機版選單","links":[{"title":"最新消息","url":"/blogs/news","children":[{"title":"活動","url":"/blogs/news/tagged/event"}]}]}]}'></div>
+</main>
+<script>window.__MENU__ = {"menu": {"title": "側邊選單", "menu_items": [{"name": "門市資訊 0912-345-678", "path": "/pages/stores"}]}};</script>
+</body></html>"""
+
+MENUS_JSON = {"linklists": [{"name": "活動選單", "items": [{"label": "雙11", "href": "/pages/1111"}]}]}
+
+CUSTOM_PAGE_1 = """<html><body>
+<aside class="sidebar"><a href="/admin/products">側欄商品</a><a href="/admin/custom_pages_index">側欄自訂頁面</a></aside>
+<main><h2>自訂頁面</h2>
+<table><thead><tr><th>標題</th><th>網址</th><th>狀態</th><th>更新時間</th><th>操作</th></tr></thead><tbody>
+<tr><td>關於我們</td><td><a href="https://www.sinchih.com.tw/pages/about">/pages/about</a></td>
+  <td><span class="badge badge-success">已發佈</span></td><td>2026-10-01</td>
+  <td><a href="/admin/custom_pages/1/edit">編輯</a><button>隱藏</button></td></tr>
+<tr><td>服務條款</td><td>/pages/terms</td><td><input type="checkbox" name="page[published]"></td><td>2026-09-01</td><td></td></tr>
+</tbody></table>
+<div class="page-list">
+  <div role="row" class="page-row"><div class="page-title">門市據點</div><a href="/pages/stores">/pages/stores</a><span class="status-label">隱藏</span></div>
+</div>
+<ul class="pagination">
+  <li><a href="/admin/custom_pages_index?page=2">2</a></li>
+  <li><a href="/admin/custom_pages?page=3">3</a></li>
+  <li><a href="/admin/custom_pages/5/edit">編輯</a></li>
+</ul>
+<div data-react-class="PagesTable" data-react-props='{"pages":[{"id":7,"title":"運送政策","handle":"shipping-policy","published":false,"updated_at":"2026-08-01"},{"id":8,"title":"隱私權政策","url":"/pages/privacy","is_hidden":false}]}'></div>
+</main></body></html>"""
+
+CUSTOM_PAGE_2 = (
+    "<html><body><main><table><tr><th>頁面名稱</th><th>顯示狀態</th></tr>"
+    '<tr><td><a href="/pages/faq">常見問題</a></td><td>顯示</td></tr></table></main></body></html>'
+)
+CUSTOM_PAGE_3 = (
+    '<html><body><main><div class="card"><h4 class="card-title">徵才資訊</h4><p>/pages/jobs</p>'
+    '<span class="label label-default">未發佈</span></div></main></body></html>'
+)
+
+
+class FakeJsonResponse:
+    """模擬 Playwright Response（JSON）；headers 含 set-cookie，用來確認不會被記錄。"""
+
+    def __init__(
+        self,
+        url: str,
+        data: Any,
+        method: str = "GET",
+        status: int = 200,
+        content_type: str = "application/json; charset=utf-8",
+    ):
+        """建立假回應。data 是 bytes 時原樣當作內容。"""
+        self.url = url
+        self.status = status
+        self.headers = {"content-type": content_type, "set-cookie": f"_admin_session={SECRET}"}
+        self.request = FakeRequest(method, url)
+        self._body = data if isinstance(data, bytes) else json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.body_reads = 0
+
+    def body(self) -> bytes:
+        """回應內容。"""
+        self.body_reads += 1
+        return self._body
+
+
+class DynamicPage(FakePage):
+    """有等待方法、evaluate 與 page.on 的假分頁；goto 後依網址觸發假回應事件。"""
+
+    def __init__(
+        self,
+        pages: dict[str, tuple[int, str, str] | Exception] | None = None,
+        default_html: str = "<html></html>",
+        responses: dict[str, list[FakeJsonResponse]] | None = None,
+        fail_waits: bool = False,
+    ):
+        """responses：網址 → goto 時要觸發的回應；fail_waits=True 時等待方法都丟出逾時。"""
+        super().__init__(pages, default_html)
+        self.responses = responses or {}
+        self.fail_waits = fail_waits
+        self.handlers: list[tuple[str, Any]] = []
+        self.calls: list[str] = []
+        self.selectors: list[str] = []
+        self.wait_kwargs: dict[str, dict[str, Any]] = {}
+
+    def on(self, event: str, handler: Any) -> None:
+        """記錄事件監聽。"""
+        self.handlers.append((event, handler))
+
+    def goto(self, url: str, **kwargs: Any) -> FakeResponse:
+        """導覽並觸發該網址的回應事件。"""
+        self.calls.append(f"goto {url}")
+        result = super().goto(url, **kwargs)
+        for response in self.responses.get(url, []):
+            for event, handler in self.handlers:
+                if event == "response":
+                    handler(response)
+        return result
+
+    def _maybe_fail(self) -> None:
+        """fail_waits=True 時丟出夾帶秘密字串的逾時例外。"""
+        if self.fail_waits:
+            raise TimeoutError(f"timeout {SECRET}")
+
+    def wait_for_load_state(self, state: str, **kwargs: Any) -> None:
+        """模擬等待載入狀態。"""
+        self.calls.append(f"load_state {state}")
+        self.wait_kwargs["load_state"] = kwargs
+        self._maybe_fail()
+
+    def wait_for_selector(self, selector: str, **kwargs: Any) -> None:
+        """模擬等待元素出現。"""
+        self.calls.append("selector")
+        self.selectors.append(selector)
+        self.wait_kwargs["selector"] = kwargs
+        self._maybe_fail()
+
+    def wait_for_timeout(self, ms: int) -> None:
+        """模擬等待固定時間。"""
+        self.calls.append(f"timeout {ms}")
+        self._maybe_fail()
+
+    def evaluate(self, script: str) -> None:
+        """模擬執行腳本。"""
+        self.calls.append("evaluate")
+
+    def content(self) -> str:
+        """回傳目前頁面 HTML。"""
+        self.calls.append("content")
+        return super().content()
+
+
+def run_dynamic(tmp_path: Path, page: FakePage, **kwargs: Any) -> Any:
+    """以假瀏覽器執行動態載入頁模式。"""
+    kwargs.setdefault("sleep", no_sleep)
+    return ae.explore_dynamic(FakeBrowser(FakeContext(page)), fake_get_cookies, tmp_path, **kwargs)
+
+
+def dynamic_pages() -> dict[str, tuple[int, str, str] | Exception]:
+    """完整流程用的假頁面：menus、自訂頁面第 1 頁與兩個分頁。"""
+    return {
+        MENUS: (200, MENUS_HTML, MENUS),
+        CUSTOM: (200, CUSTOM_PAGE_1, CUSTOM),
+        f"{CUSTOM}?page=2": (200, CUSTOM_PAGE_2, f"{CUSTOM}?page=2"),
+        f"{CUSTOM_ALT}?page=3": (200, CUSTOM_PAGE_3, f"{CUSTOM_ALT}?page=3"),
+    }
+
+
+def items_of(group: Any) -> list[tuple[int, str, str]]:
+    """選單群組的 (層級, 名稱, 連結) 清單。"""
+    return [(item.level, item.title, item.url) for item in group.items]
+
+
+class TestMainContentKeepsMenuEditor:
+    """主內容區只移除左側選單那一個容器與頂部導覽列。"""
+
+    def test_nav_main_menu_inside_main_kept(self) -> None:
+        """<main> 裡 class 含 main-menu 的 <nav> 選單編輯區保留；左側選單與頂部導覽列移除。"""
+        text = ae._main_content_soup(MENUS_HTML).get_text(" ")
+        assert "iPhone" in text and "聯絡我們" in text
+        assert "側欄商品" not in text and "頂部個人設定" not in text
+
+    def test_fallback_removes_only_sidebar(self) -> None:
+        """退回整頁時只移除 find_menu_container 找到的左側選單與頂部 header，其他 nav/menu 保留。"""
+        sidebar = "".join(f'<a href="/admin/p{i}">側欄{i}</a>' for i in range(5))
+        html = (
+            '<html><body><header><a href="/admin/profile">頂部</a></header>'
+            f'<aside class="sidebar">{sidebar}</aside>'
+            '<div class="editor"><nav class="main-menu"><ul><li><a href="/">首頁</a></li></ul></nav>'
+            '<aside class="help"><p>說明側欄</p></aside></div></body></html>'
+        )
+        text = ae._main_content_soup(html).get_text(" ")
+        assert "首頁" in text and "說明側欄" in text
+        assert "側欄0" not in text and "頂部" not in text
+
+
+class TestDynamicWait:
+    """讀 HTML 前等待 JS 動態內容。"""
+
+    def test_wait_order_before_reading(self, tmp_path: Path) -> None:
+        """每頁依序：goto → networkidle → 等待動態項目 → 等待渲染穩定 → 同步表單 → 讀 HTML。"""
+        page = DynamicPage({MENUS: (200, MENUS_HTML, MENUS)}, default_html=simple_list_html())
+        run_dynamic(tmp_path, page)
+        first = page.calls[: page.calls.index("content") + 1]
+        assert first == [
+            f"goto {MENUS}",
+            "load_state networkidle",
+            "selector",
+            f"timeout {ae.RENDER_SETTLE_MS}",
+            "evaluate",
+            "content",
+        ]
+        assert page.calls.count("load_state networkidle") == 2
+        assert page.wait_kwargs["load_state"]["timeout"] == ae.NETWORK_IDLE_TIMEOUT_MS
+        assert page.wait_kwargs["selector"]["timeout"] == ae.DYNAMIC_SELECTOR_TIMEOUT_MS
+        for part in ("table tbody tr", ".dd-item", ".tree-node", "[data-react-class]", "a[href*='/pages/']", "input"):
+            assert part in page.selectors[0]
+
+    def test_wait_timeouts_do_not_stop(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """等待逾時不中斷：照樣讀內容、寫檔，只顯示例外類型（不帶例外訊息）。"""
+        caplog.set_level(logging.INFO, logger="admin_explore")
+        page = DynamicPage({MENUS: (200, MENUS_HTML, MENUS)}, default_html=simple_list_html(), fail_waits=True)
+        result = run_dynamic(tmp_path, page)
+        assert result.finished
+        assert page.calls.count("content") == 2
+        assert "iPhone" in (tmp_path / "menus.md").read_text(encoding="utf-8")
+        outputs = collect_outputs(tmp_path, capsys, caplog)
+        assert "等待網路閒置逾時或失敗（TimeoutError）" in outputs
+        assert "等待動態項目出現逾時或失敗（TimeoutError）" in outputs
+        assert SECRET not in outputs
+
+    def test_page_without_wait_methods(self) -> None:
+        """分頁物件沒有等待方法時直接略過，不出錯。"""
+        ae.wait_for_dynamic_content(object())
+
+
+class TestJsonResponseRecorder:
+    """被動收集同網域 GET JSON 回應。"""
+
+    def test_only_same_site_get_json(self) -> None:
+        """只收同網域、GET、2xx、JSON、非敏感網址；POST 不讀內容；壞掉的 JSON 略過。"""
+        recorder = ae.JsonResponseRecorder()
+        good = FakeJsonResponse(f"{ADMIN}/admin/menus.json", {"a": 1})
+        post = FakeJsonResponse(f"{ADMIN}/admin/menus.json", {"b": 2}, method="POST")
+        others = [
+            FakeJsonResponse("https://other.com/menus.json", {"c": 3}),
+            FakeJsonResponse(f"{ADMIN}/admin/menus", {"d": 4}, content_type="text/html"),
+            FakeJsonResponse(f"{ADMIN}/admin/orders.json", {"e": 5}),
+            FakeJsonResponse(f"{ADMIN}/admin/err.json", {"f": 6}, status=500),
+            FakeJsonResponse(f"{ADMIN}/admin/bad.json", b"not json"),
+        ]
+        for response in [good, post, *others]:
+            recorder.handle(response)
+        assert post.body_reads == 0
+        assert good.body_reads == 0
+        captured = recorder.drain()
+        assert [(c.url, c.data) for c in captured] == [(f"{ADMIN}/admin/menus.json", {"a": 1})]
+        assert recorder.drain() == []
+
+    def test_registered_before_navigation(self, tmp_path: Path) -> None:
+        """開頁前就以 page.on("response") 註冊監聽，且仍以 page.route 只放行 GET。"""
+        page = DynamicPage(default_html=simple_list_html())
+        run_dynamic(tmp_path, page)
+        assert [event for event, _ in page.handlers] == ["response"]
+        assert [pattern for pattern, _ in page.routes] == ["**/*"]
+        post = FakeRoute("POST", f"{ADMIN}/admin/menus")
+        page.routes[0][1](post)
+        assert post.action == "abort"
+
+
+class TestEmbeddedJson:
+    """data-react-props、data-* 與 script 內的 JSON。"""
+
+    def test_extract_embedded_json(self) -> None:
+        """data-react-props 與 script 內的 JSON 都抓得到；JSON 型別的 script 也算。"""
+        html = MENUS_HTML + '<script type="application/json">{"x": [1]}</script><div data-x="not json"></div>'
+        found = ae.extract_embedded_json(html)
+        assert {"menus": [{"title": "手機版選單", "links": [{"title": "最新消息", "url": "/blogs/news", "children": [{"title": "活動", "url": "/blogs/news/tagged/event"}]}]}]} in found
+        assert any(isinstance(d, dict) and "menu" in d for d in found)
+        assert {"x": [1]} in found
+
+
+class TestMenusParsing:
+    """menus 選單樹與層級解析。"""
+
+    def test_dom_nested_lists_and_nestable(self) -> None:
+        """巢狀 ul/li 與 .dd-list/.dd-item 解析出群組、層級、名稱與連結（含 data-url 與網址欄位）。"""
+        groups = ae.menu_groups_from_dom(ae._main_content_soup(MENUS_HTML))
+        assert [(g.name, items_of(g)) for g in groups] == [
+            (
+                "主選單",
+                [(1, "首頁", "/"), (1, "全部商品", "/collections/all"), (2, "手機", "/collections/phone"), (3, "iPhone", "/collections/iphone")],
+            ),
+            ("頁尾選單", [(1, "關於我們", "/pages/about"), (2, "聯絡我們", "/pages/contact")]),
+        ]
+        assert all(g.source == "畫面 DOM" for g in groups)
+
+    def test_dom_tree_nodes_and_indent(self) -> None:
+        """aria-level 樹狀節點與縮排 div 都能解析層級。"""
+        html = """<html><body><main>
+        <h3>手機選單</h3>
+        <div role="treeitem" aria-level="1"><span class="node-title">商品</span><a href="/collections/all">連結</a></div>
+        <div role="treeitem" aria-level="2"><span class="node-title">耳機</span><a href="/collections/earphone">連結</a></div>
+        <h3>縮排選單</h3>
+        <div class="menu-item" style="padding-left: 0px"><a href="/a">A</a></div>
+        <div class="menu-item" style="padding-left: 20px"><a href="/b">B</a></div>
+        <div class="menu-item" style="padding-left: 40px"><a href="/c">C</a></div>
+        </main></body></html>"""
+        groups = ae.menu_groups_from_dom(ae._main_content_soup(html))
+        assert [(g.name, items_of(g)) for g in groups] == [
+            ("手機選單", [(1, "商品", "/collections/all"), (2, "耳機", "/collections/earphone")]),
+            ("縮排選單", [(1, "A", "/a"), (2, "B", "/b"), (3, "C", "/c")]),
+        ]
+
+    def test_dom_table(self) -> None:
+        """有名稱、連結、層級欄的表格也算選單。"""
+        html = (
+            "<main><h3>頁尾選單</h3><table><thead><tr><th>名稱</th><th>連結</th><th>層級</th></tr></thead>"
+            '<tbody><tr><td>FAQ</td><td><a href="/pages/faq">/pages/faq</a></td><td>2</td></tr></tbody></table></main>'
+        )
+        groups = ae.menu_groups_from_dom(ae._main_content_soup(html))
+        assert [(g.name, items_of(g)) for g in groups] == [("頁尾選單", [(2, "FAQ", "/pages/faq")])]
+
+    def test_json_groups(self) -> None:
+        """JSON 的群組名稱、子項目層級，以及沒有名稱的項目陣列用欄位名稱標示。"""
+        groups = ae.menu_groups_from_json(MENUS_JSON, "測試")
+        assert [(g.name, items_of(g)) for g in groups] == [("活動選單", [(1, "雙11", "/pages/1111")])]
+        bare = ae.menu_groups_from_json({"footer": [{"title": "A", "link": {"url": "/a"}, "children": [{"name": "B", "path": "/b"}]}]}, "測試")
+        assert [(g.name, items_of(g)) for g in bare] == [("JSON 欄位：footer", [(1, "A", "/a"), (2, "B", "/b")])]
+
+    def test_admin_links_not_menu_targets(self) -> None:
+        """只有後台連結（例如編輯按鈕）的清單不算選單。"""
+        html = '<main><ul><li><a href="/admin/menus/1/edit">主選單</a></li></ul></main>'
+        assert ae.dedupe_menu_groups(ae.menu_groups_from_dom(ae._main_content_soup(html))) == []
+
+    def test_render_menus_page(self) -> None:
+        """整合 DOM、內嵌 JSON 與 GET JSON，輸出樹狀清單與表格；電話遮蔽、側欄不出現。"""
+        captured = [ae.CapturedJson(f"{ADMIN}/admin/menus.json", MENUS_JSON)]
+        md, count = ae.render_menus_page(MENUS_HTML, MENUS, MENUS, 1, captured)
+        assert count == 5
+        assert "### 選單樹狀結構" in md
+        assert "#### 主選單（來源：畫面 DOM，共 4 個項目）" in md
+        assert "\n- 全部商品 → /collections/all\n  - 手機 → /collections/phone\n    - iPhone → /collections/iphone\n" in md
+        assert "| 選單群組 | 層級 | 項目名稱 | 連結網址 |" in md
+        assert "| 主選單 | 第 3 層 | iPhone | /collections/iphone |" in md
+        assert "| 頁尾選單 | 第 2 層 | 聯絡我們 | /pages/contact |" in md
+        assert "| 手機版選單 | 第 2 層 | 活動 | /blogs/news/tagged/event |" in md
+        assert "| 側邊選單 | 第 1 層 | 門市資訊 *** | /pages/stores |" in md
+        assert "| 活動選單 | 第 1 層 | 雙11 | /pages/1111 |" in md
+        assert "來源：GET JSON /admin/menus.json" in md
+        assert "0912-345-678" not in md
+        assert "側欄商品" not in md and "頂部個人設定" not in md
+
+    def test_render_without_menus(self) -> None:
+        """找不到選單時寫明可能原因。"""
+        md, count = ae.render_menus_page(simple_list_html(), MENUS, MENUS, 1)
+        assert count == 0
+        assert "沒有找到選單樹" in md
+
+
+class TestCustomPagesParsing:
+    """custom_pages_index 的標題、網址、發佈／隱藏狀態解析。"""
+
+    def test_table_rows_and_json(self) -> None:
+        """表格、React div 列與 data-react-props JSON 都解析出標題、網址、狀態與其他資訊。"""
+        pages, counts = ae.extract_custom_pages(CUSTOM_PAGE_1)
+        assert counts == {"畫面 DOM": 3, "內嵌 JSON": 2, "GET JSON": 0}
+        assert [(p.title, p.url, p.status) for p in pages] == [
+            ("關於我們", "https://www.sinchih.com.tw/pages/about", "已發佈"),
+            ("服務條款", "/pages/terms", "隱藏"),
+            ("門市據點", "/pages/stores", "隱藏"),
+            ("運送政策", "/pages/shipping-policy", "隱藏"),
+            ("隱私權政策", "/pages/privacy", "發佈"),
+        ]
+        assert pages[0].extra == "更新時間：2026-10-01"
+        assert "id=7" in pages[3].extra and "updated_at=2026-08-01" in pages[3].extra
+
+    def test_status_header_and_card(self) -> None:
+        """「顯示狀態」欄與卡片上的 label 都能判斷狀態；連結文字當標題。"""
+        pages, _ = ae.extract_custom_pages(CUSTOM_PAGE_2)
+        assert [(p.title, p.url, p.status) for p in pages] == [("常見問題", "/pages/faq", "顯示")]
+        pages, _ = ae.extract_custom_pages(CUSTOM_PAGE_3)
+        assert [(p.title, p.url, p.status) for p in pages] == [("徵才資訊", "/pages/jobs", "未發佈")]
+
+    def test_json_status_fields(self) -> None:
+        """JSON 的 visible、hidden、status、published_at 欄位轉成發佈／隱藏。"""
+        data = {
+            "data": {
+                "pages": [
+                    {"title": "A", "handle": "a", "visible": True},
+                    {"title": "B", "handle": "b", "is_hidden": True},
+                    {"title": "C", "handle": "c", "status": "draft"},
+                    {"title": "D", "handle": "d", "published_at": None},
+                    {"title": "E", "url": "/pages/e"},
+                ]
+            }
+        }
+        pages = ae.custom_pages_from_json(data)
+        assert [(p.title, p.url, p.status) for p in pages] == [
+            ("A", "/pages/a", "發佈"),
+            ("B", "/pages/b", "隱藏"),
+            ("C", "/pages/c", "隱藏（草稿）"),
+            ("D", "/pages/d", "未發佈"),
+            ("E", "/pages/e", ""),
+        ]
+
+    def test_json_without_page_signals_ignored(self) -> None:
+        """沒有網址、handle、狀態的物件陣列（例如後台選單）不當成自訂頁面。"""
+        assert ae.custom_pages_from_json({"nav": [{"title": "商品", "url": "/admin/products"}]}) == []
+
+    def test_merge_duplicates(self) -> None:
+        """同一頁出現在 DOM 與 JSON 時合併，缺的狀態互相補上。"""
+        merged = ae.merge_custom_pages(
+            [
+                ae.CustomPage("關於我們", "https://www.sinchih.com.tw/pages/about", ""),
+                ae.CustomPage("關於我們", "/pages/about", "發佈", "id=1"),
+            ]
+        )
+        assert merged == [ae.CustomPage("關於我們", "https://www.sinchih.com.tw/pages/about", "發佈", "id=1")]
+
+    def test_pagination_links(self) -> None:
+        """分頁連結包含 custom_pages_index?page=N 與 custom_pages?page=N，不含編輯頁。"""
+        assert ae.dynamic_pagination_links(CUSTOM_PAGE_1, CUSTOM) == [f"{CUSTOM}?page=2", f"{CUSTOM_ALT}?page=3"]
+
+    def test_render_custom_pages(self) -> None:
+        """輸出 標題 | 網址 | 狀態 | 其他資訊 表格；側欄不出現。"""
+        md, count = ae.render_custom_pages_page(CUSTOM_PAGE_1, CUSTOM, CUSTOM, 1)
+        assert count == 5
+        assert "| 標題 | 網址 | 狀態 | 其他資訊 |" in md
+        assert "| 關於我們 | https://www.sinchih.com.tw/pages/about | 已發佈 | 更新時間：2026-10-01 |" in md
+        assert "| 服務條款 | /pages/terms | 隱藏 | 更新時間：2026-09-01 |" in md
+        assert "| 門市據點 | /pages/stores | 隱藏 |  |" in md
+        assert "| 隱私權政策 | /pages/privacy | 發佈 | id=8 |" in md
+        assert "側欄商品" not in md
+
+
+class TestExploreDynamic:
+    """--dynamic 完整流程。"""
+
+    def test_full_run(self, tmp_path: Path) -> None:
+        """只讀 menus 與 custom_pages_index（含兩種分頁網址），寫入兩個主題檔，每頁之間等待 2～5 秒。"""
+        responses = {
+            MENUS: [
+                FakeJsonResponse(f"{ADMIN}/admin/menus.json", MENUS_JSON),
+                FakeJsonResponse(f"{ADMIN}/admin/menus/save.json", {"menus": [{"title": "POST選單", "links": [{"title": "X", "url": "/x"}]}]}, method="POST"),
+                FakeJsonResponse("https://other.com/menus.json", {"menus": [{"title": "外站選單", "links": [{"title": "Y", "url": "/y"}]}]}),
+            ]
+        }
+        page = DynamicPage(dynamic_pages(), responses=responses)
+        sleeps: list[float] = []
+        result = run_dynamic(tmp_path, page, sleep=sleeps.append)
+        assert result.finished
+        assert page.goto_calls == [MENUS, CUSTOM, f"{CUSTOM}?page=2", f"{CUSTOM_ALT}?page=3"]
+        assert len(sleeps) == 3 and all(2.0 <= s <= 5.0 for s in sleeps)
+
+        menus_md = (tmp_path / "menus.md").read_text(encoding="utf-8")
+        assert menus_md.startswith("# 後台選單設定：menus")
+        assert "--dynamic" in menus_md
+        assert "| 活動選單 | 第 1 層 | 雙11 | /pages/1111 |" in menus_md
+        assert "| 主選單 | 第 2 層 | 手機 | /collections/phone |" in menus_md
+        assert "POST選單" not in menus_md and "外站選單" not in menus_md
+
+        custom_md = (tmp_path / "custom_pages_index.md").read_text(encoding="utf-8")
+        assert custom_md.startswith("# 後台自訂頁面：custom_pages_index")
+        assert custom_md.index("## 第 1 頁") < custom_md.index("## 第 2 頁") < custom_md.index("## 第 3 頁")
+        assert "| 常見問題 | /pages/faq | 顯示 |" in custom_md
+        assert "| 徵才資訊 | /pages/jobs | 未發佈 |" in custom_md
+        assert not (tmp_path / "custom_pages.md").exists()
+
+        saved = json.loads((tmp_path / "progress.json").read_text(encoding="utf-8"))
+        assert saved["visited_urls"] == page.goto_calls
+
+    def test_rereads_pages_already_in_progress(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """progress.json 已記錄的這兩頁與分頁會先移除再重讀；其他網址的紀錄保留。"""
+        (tmp_path / "progress.json").write_text(
+            json.dumps(
+                {
+                    "visited_urls": [ae.ADMIN_HOME, MENUS, CUSTOM, f"{CUSTOM}?page=2", f"{CUSTOM_ALT}?page=3", BLOGS],
+                    "not_found_urls": [f"{CUSTOM}?page=4", f"{ADMIN}/admin/x"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        page = DynamicPage(default_html=simple_list_html())
+        result = run_dynamic(tmp_path, page)
+        assert result.finished
+        assert page.goto_calls == [MENUS, CUSTOM]
+        assert "移除 5 筆" in capsys.readouterr().out
+        saved = json.loads((tmp_path / "progress.json").read_text(encoding="utf-8"))
+        assert saved["visited_urls"] == [ae.ADMIN_HOME, BLOGS, MENUS, CUSTOM]
+        assert saved["not_found_urls"] == [f"{ADMIN}/admin/x"]
+
+        page2 = DynamicPage(default_html=simple_list_html())
+        run_dynamic(tmp_path, page2)
+        assert page2.goto_calls == [MENUS, CUSTOM]
+
+    def test_reset_dynamic_progress(self) -> None:
+        """只移除 menus、custom_pages_index、custom_pages 與其分頁。"""
+        progress = ae.Progress(
+            visited_urls=[MENUS, f"{MENUS}?page=2", BLOGS, f"{CUSTOM_ALT}?page=2", f"{ADMIN}/admin/menus_v2"],
+            not_found_urls=[CUSTOM],
+        )
+        assert ae.reset_dynamic_progress(progress) == 4
+        assert progress.visited_urls == [BLOGS, f"{ADMIN}/admin/menus_v2"]
+        assert progress.not_found_urls == []
+
+    def test_max_pages(self, tmp_path: Path) -> None:
+        """自訂頁面分頁再多，本次最多讀 50 頁。"""
+        pages: dict[str, tuple[int, str, str] | Exception] = {
+            CUSTOM: (200, simple_list_html('<a href="?page=2">2</a>'), CUSTOM)
+        }
+        for n in range(2, 101):
+            url = f"{CUSTOM}?page={n}"
+            pages[url] = (200, simple_list_html(f'<a href="?page={n + 1}">下一頁</a>'), url)
+        page = DynamicPage(pages, default_html=simple_list_html())
+        result = run_dynamic(tmp_path, page, max_pages=100)
+        assert len(page.goto_calls) == 50
+        assert not result.finished
+        assert "50" in result.reason
+
+    @pytest.mark.parametrize("status", [429, 403, 500])
+    def test_stop_on_status(self, status: int, tmp_path: Path) -> None:
+        """menus 回 429/403/5xx 立即停止，不讀 custom_pages_index。"""
+        page = DynamicPage({MENUS: (status, "", MENUS)})
+        result = run_dynamic(tmp_path, page)
+        assert page.goto_calls == [MENUS]
+        assert result.reason == f"HTTP {status}"
+
+    def test_stop_on_login_and_captcha(self, tmp_path: Path) -> None:
+        """被導回登入頁或出現驗證碼立即停止。"""
+        page = DynamicPage({MENUS: (200, "<form></form>", f"{ADMIN}/admins/sign_in")})
+        assert "登入頁" in run_dynamic(tmp_path / "a", page).reason
+        page2 = DynamicPage({MENUS: (200, '<div class="g-recaptcha"></div>', MENUS)})
+        assert run_dynamic(tmp_path / "b", page2).reason == "頁面出現驗證碼"
+        assert page2.goto_calls == [MENUS]
+
+    def test_cookie_never_output(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """cookie（含回應 headers 的 set-cookie）不出現在終端機、log 或任何檔案。"""
+        caplog.set_level(logging.INFO, logger="admin_explore")
+        responses = {MENUS: [FakeJsonResponse(f"{ADMIN}/admin/menus.json", MENUS_JSON)]}
+        page = DynamicPage(dynamic_pages(), responses=responses)
+        context = FakeContext(page)
+        result = ae.explore_dynamic(FakeBrowser(context), fake_get_cookies, tmp_path, sleep=no_sleep)
+        assert result.finished
+        assert context.cookies and context.cookies[0]["value"] == SECRET
+        assert context.closed
+        assert SECRET not in collect_outputs(tmp_path, capsys, caplog)
+
+
 class TestCommandLine:
     """命令列參數與模式切換。"""
 
     @pytest.mark.parametrize(
         "argv, mode",
-        [([], "menu"), (["--lists"], "lists"), (["--mode", "lists"], "lists"), (["--mode", "menu"], "menu")],
+        [
+            ([], "menu"),
+            (["--lists"], "lists"),
+            (["--mode", "lists"], "lists"),
+            (["--mode", "menu"], "menu"),
+            (["--dynamic"], "dynamic"),
+            (["--mode", "dynamic"], "dynamic"),
+        ],
     )
     def test_parse_args(self, argv: list[str], mode: str) -> None:
-        """預設讀左側選單；--lists 或 --mode lists 讀列表頁。"""
+        """預設讀左側選單；--lists 讀列表頁；--dynamic 或 --mode dynamic 重新讀動態載入頁。"""
         assert ae.parse_args(argv) == mode
 
     def test_invalid_mode(self) -> None:
@@ -1073,14 +1643,21 @@ class TestCommandLine:
         with pytest.raises(SystemExit):
             ae.parse_args(["--mode", "all"])
 
+    def test_lists_and_dynamic_exclusive(self) -> None:
+        """--lists 與 --dynamic 不能同時使用。"""
+        with pytest.raises(SystemExit):
+            ae.parse_args(["--lists", "--dynamic"])
+
     def test_run_mode(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """menu 呼叫 explore_admin，lists 呼叫 explore_lists。"""
+        """menu 呼叫 explore_admin，lists 呼叫 explore_lists，dynamic 呼叫 explore_dynamic。"""
         calls: list[str] = []
         monkeypatch.setattr(ae, "explore_admin", lambda *a, **k: calls.append("menu"))
         monkeypatch.setattr(ae, "explore_lists", lambda *a, **k: calls.append("lists"))
+        monkeypatch.setattr(ae, "explore_dynamic", lambda *a, **k: calls.append("dynamic"))
         ae.run_mode("menu", object(), fake_get_cookies, tmp_path)
         ae.run_mode("lists", object(), fake_get_cookies, tmp_path)
-        assert calls == ["menu", "lists"]
+        ae.run_mode("dynamic", object(), fake_get_cookies, tmp_path)
+        assert calls == ["menu", "lists", "dynamic"]
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,22 @@
 
 ---
 
+## 2026-10-16｜agy｜審查 scripts/admin_explore.py（--dynamic 動態載入頁模式）通過
+審查 `scripts/admin_explore.py` 與 `tests/test_admin_explore.py`（共 274 項 pytest 測試全數通過）：
+- **只重讀指定的兩頁**：`--dynamic`（或 `--mode dynamic`）啟動時透過 `reset_dynamic_progress` 將 `/admin/menus` 與 `/admin/custom_pages_index`（含 `/admin/custom_pages` 分頁）從 `progress.json` 的已讀與 404 紀錄移除，只重抓這兩頁，不影響其他已讀紀錄。
+- **動態等待與唯讀監聽（無問題）**：依序執行 `wait_for_load_state("networkidle")`（15 秒）→ `wait_for_selector(DYNAMIC_CONTENT_SELECTOR)`（10 秒）→ `wait_for_timeout(2000)` → `sync_form_values`，並以 `JsonResponseRecorder` 被動監聽同網域 `GET` 2xx JSON 回應（不發送任何額外請求，且維持 `RequestGuard` 攔截所有非 GET 請求）。
+- **結構解析與遮蔽（無問題）**：修正 `_main_content_soup` 避免誤刪主內容區內的選單編輯元件；`menus.md` 整合 DOM、內嵌 JSON 與 GET JSON 輸出選單樹狀階層與表格（名稱、連結網址、層級），`custom_pages_index.md` 輸出自訂頁面表格（標題、網址、發佈/隱藏狀態），且所有輸出維持 `mask_sensitive` 遮蔽與 cookie 記憶體保護。
+
+## 2026-10-16｜Claude Code｜admin_explore.py 新增 --dynamic（重讀 menus、custom_pages_index）的幾個選擇
+使用者要求的任務（不在任務清單上）。上次 --lists 讀這兩頁只抓到說明文字（內容由 JS 動態載入）。規格沒寫明的地方這樣處理：
+- **重讀**：啟動時把 `/admin/menus`、`/admin/custom_pages_index`、`/admin/custom_pages` 及其任何 query 版本從 progress.json 的已讀與 404 紀錄移除，其他紀錄不動。
+- **等待**：每頁 `networkidle`（15 秒）→ `wait_for_selector`（10 秒，`table tbody tr`、`.dd-item`、`.tree-node`、`[data-react-class] *`、`a[href*='/pages/']` 等任一出現）→ 固定 2 秒；逾時只記錄、不中斷。
+- **GET JSON**：用 `page.on("response")` 被動篩選同網域、GET、2xx、content-type 含 json、非敏感網址的回應，離開事件處理後才讀內容；不發任何額外請求，headers 只看 content-type。輸出只列路徑，不列 query。
+- **主內容區**：只移除 `find_menu_container` 找到的那一個左側選單；若它在 `<main>`／主內容區裡面（非退回整頁）就視為選單編輯元件而保留。頂部導覽列只認 navbar 等 class、role=banner，以及直接放在 body 下的 header/nav。
+- **選單來源**：DOM（巢狀 ul/li、.dd-list、aria-level／data-level／縮排 div、有名稱與連結欄的表格）＋內嵌 JSON＋GET JSON，各自標示來源，項目完全相同的群組只留一份。後台連結（/admin/…）不當成選單目標；沒有任何連結的群組不輸出。JSON 裡沒有名稱的項目陣列以「JSON 欄位：xxx」標示，可能混入編輯器的「連結目標選項」（例如所有頁面清單），看來源欄判斷。
+- **分頁**：只跟 HTML 上實際有的 `custom_pages_index?page=N`／`custom_pages?page=N` 連結（N≥2），兩者都寫進 custom_pages_index.md；若分頁是沒有 href 的 JS 按鈕就讀不到（依規則不點擊、不自己拼網址）。
+- **限制**：若 Cyberbiz 用 POST 載入這兩頁的資料（像 custom_collections 的 `search_products`），會被唯讀攔截器擋下而抓不到，輸出檔會寫明，請看 explore.log 的「已擋下非 GET 請求」。
+
 ## 2026-10-16｜agy｜審查 scripts/admin_explore.py（--lists 列表頁模式）通過
 審查 `scripts/admin_explore.py` 與 `tests/test_admin_explore.py`（共 240 項 pytest 測試全數通過）：
 - **唯讀與請求攔截（無問題）**：選單模式與列表頁模式共用 `_run_with_page`，在開啟任何頁面前即註冊 `page.route("**/*", guard.handle)`，僅放行 `GET`，其餘 HTTP 方法一律 `route.abort()`。`sync_form_values` 僅在本地 DOM 將欄位 property 同步至 attribute 供 `page.content()` 讀取，不觸發任何表單送出或網路請求。
