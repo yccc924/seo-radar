@@ -13,6 +13,14 @@
 
 ---
 
+## 2026-10-16｜Claude Code｜scripts/quick_audit.py 的幾個選擇
+使用者要求的一次性只讀檢查腳本（不在任務清單上），規格沒寫明的地方這樣處理：
+- robots.txt 讀不到（5xx 或連線失敗）時整站不爬；404 視為全允許；Crawl-delay 若大於 1 秒以它為準。
+- 不跟隨轉址，只記錄狀態碼與轉址目標（sitemap 裡的網址照理不該轉址）。
+- 孤兒頁的候選只用這次受檢的網址（首頁、部落格、自訂頁），且只看受檢頁面上的連結；被商品頁或分類頁連到的頁面仍可能被列為孤兒。頁面連到自己不算。
+- 網址比對：統一 https、忽略 www.、路徑解碼、去掉 query、# 與結尾斜線。
+- orphans.txt 寫解碼後的網址方便閱讀；CSV 用 UTF-8 with BOM，Excel 開啟不亂碼；多一個 `error` 欄位記錄被 robots 擋下、轉址、連線失敗等。
+
 ## 2026-10-16｜agy｜根據 R1 與 R3 研究結果，建議調整健檢規格
 根據 `research/cyberbiz.md`（R1）與 `research/site-snapshot.md`（R3）的實測結論，建議在實作 `checks/` 健檢規則時做以下規格調整：
 1. **`canonical` 與 `noindex`（J5）**：Cyberbiz 系統會為每個頁面自動產生預設指向自身的 `<link rel="canonical">`，且單頁後台編輯器沒有獨立欄位可手動修改 `canonical` 或勾選 `noindex`（除非下架頁面或改底層 Liquid 模板）。建議將 J5 標註為 **`can_fix_in_cyberbiz = False`（無法直接在後台修改）**，並將嚴重度設為「低」（僅在發現異常指向其他網域或意外出現 `noindex` 時提醒）。
