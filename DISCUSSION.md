@@ -13,6 +13,21 @@
 
 ---
 
+## 2026-10-17｜Claude Code｜scripts/admin_edit.py（依修改單改後台）與 scripts/plan_fixes.py（產生修改單）的幾個選擇
+使用者要求的任務（不在任務清單上）。共 407 項 pytest 全數通過（新增 test_admin_edit.py 59 項、test_plan_fixes.py 36 項）；`admin_explore.py` 完全沒改。規格沒寫明的地方這樣處理：
+- **修改方式（op）**：修改單多一個選填欄位 `op`。`set`（預設）＝目前的值要等於 before；`replace`＝目前的值要剛好含 1 次 before，換成 after（修錯字）；`prepend`／`append`＝目前的值不含 `absent`（例如 `<h1`、`application/ld+json`）才加上去；`move_style_to_end`＝目前內容要以 `<style>` 開頭。不符一律跳過並警告。既有的 `changes/2026-10-17-s12.yaml` 不用改就能用。
+- **允許範圍**：網址只接受 `https://sinchih.cyberbiz.co/admin/custom_pages/`、`/admin/blogs/`、`/admin/redirections/` 開頭，且不能是 admin_explore 認定的敏感網址；欄位只接受 `status`、`body_html`、`seo_description`、`redirect`。其他一律拒絕。
+- **找欄位**：還沒看過編輯頁的 HTML，所以依序用修改單的 `selector` → name/id 關鍵字（例如 `[status]`、`body_html`）→ 標籤文字（`field_label`、「狀態」）。下拉選單和單選鈕比對的是畫面上的文字（「發佈」「隱藏」）。內容欄位如果是 TinyMCE／CKEditor 會透過編輯器讀寫。**第一次請先跑預覽模式**，確認每筆都找得到欄位、目前的值也正確。
+- **只放行一次儲存**：使用者輸入 y 後，只放行「送到同一頁路徑（編輯頁去掉 `/edit`、新增頁去掉 `/new`，可多 `.json`）」的第一個非 GET 請求，放行後立即恢復封鎖；按完儲存後不管成功與否都恢復封鎖。其他網址、其他網域的非 GET 一律擋下。
+- **備份**：`backups/YYYY-MM-DD/HHMMSS_<頁面代號>_<欄位>.html`（整頁 HTML，CSRF token 已清空）＋ `.json`（欄位原本的值與該筆修改）。只在使用者確認 y 後、修改前備份。
+- **轉址驗證**：新增轉址的表單送出後沒有「同一頁」可重新載入，改成開 `/admin/redirections` 列表，檢查新舊網址有沒有出現。若新轉址被排到列表第 2 頁以後，可能誤判失敗，屆時請人工確認。另外不會先檢查同一個舊網址是否已經有轉址。
+- **沒給 --file**：會讀 `changes/` 底下所有修改單。已執行過的項目因為目前的值已經變了，會被當成「不符」跳過，不會重複修改。
+- **plan_fixes 對後台網址的找法**：只用 `research/admin/*.md` 裡實際出現的資料（自訂頁面列表的 `id=` → `/admin/custom_pages/<id>/edit`，或同一列的 `/edit` 連結），不猜網址。目前 research/admin 沒有部落格文章的編輯連結，所以 **S1（70 篇）、S13、S14 都產生不了修改單**，只列在終端機與修改單的 `skipped`。首頁（S5）不是自訂頁面，也一樣跳過。要處理 S1 得先讀取部落格文章列表（需要另外讓 admin_explore 讀文章列表，**請使用者決定要不要做**）。
+- **AI 撰寫的文字**：plan_fixes 不呼叫任何 AI，新文字用範本產生（H1 取頁面標題；meta description 仿照現有收購頁的寫法；LocalBusiness JSON-LD 只放店名、網址和 S7 更正後的地址，不編造電話和營業時間），一律標 `note: 'AI 撰寫，請確認內容'`，admin_edit 確認時會顯示這個備註。
+- **不能自動處理的問題**：S2、S9（FAQ 需要真實問答）、S11，以及刪除頁面、價格、商品、訂單、會員相關問題，記在 ISSUES.md 最後新增的「六、plan_fixes 無法自動處理」表格，同一個編號不重複記錄。
+- **不覆蓋**：同名修改單（不分大小寫）已存在就不覆蓋。所以 `--issue S12` 遇到現有的 `2026-10-17-s12.yaml` 會跳過；那份檔案只有隱藏、沒有轉址，要補轉址請先把舊檔改名。
+- 本機試跑 `--all`（在暫存資料夾，沒動到正式的 ISSUES.md 和 changes/）會產生 S3、S4、S6、S7、S8、S10（35 筆）、S12 共 7 份修改單。
+
 ## 2026-10-17｜使用者 / agy｜iPhone 17 Pro Max 重複頁保留決定
 針對 iPhone 17 Pro Max 256GB 與 512GB 的同名重複頁，使用者決定「各保留一個就好」：
 - **256GB**：保留 `/pages/17-pro-max-256g`，淘汰帶時間戳記的 `/pages/17-pro-max-256g-20260414171746`。
