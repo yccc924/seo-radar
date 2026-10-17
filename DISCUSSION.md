@@ -13,6 +13,13 @@
 
 ---
 
+## 2026-10-17｜使用者 / agy｜iPhone 17 Pro Max 重複頁保留決定
+針對 iPhone 17 Pro Max 256GB 與 512GB 的同名重複頁，使用者決定「各保留一個就好」：
+- **256GB**：保留 `/pages/17-pro-max-256g`，淘汰帶時間戳記的 `/pages/17-pro-max-256g-20260414171746`。
+- **512GB**：保留英文短網址 `/pages/17-pro-max-512g`，淘汰中文網址 `/pages/iphone-17-pro-max-512gb-二手收購價`。
+→ 執行：已更新 `research/output/buyback_hub.html` 與 `buyback_hub_check.csv` 移除被淘汰的 2 頁，收購清單收斂為 138 頁。
+→ 後續動作：請使用者在 Cyberbiz 後台將淘汰的 2 頁設為「隱藏」，並在 `/admin/redirections` 新增 301 轉址指向保留的網址。
+
 ## 2026-10-17｜Claude Code｜scripts/build_buyback_hub.py（收購價總覽 HTML）的幾個選擇
 使用者要求的任務（不在任務清單上），完全不連網。規格沒寫明的地方這樣處理：
 - **來源**：以 `custom_pages_index.md` 為主（有發佈／隱藏狀態，隱藏頁不收），`quick_audit.csv` 只補列表沒有的頁面（狀態碼 200）。目前兩邊都是 140 頁、網址代碼完全一致。
