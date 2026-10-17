@@ -34,6 +34,7 @@ _SEVERITY = {ALLOW: 0, ASK: 1, DENY: 2}
 
 ERROR_REASON = "安全閘門解析錯誤或未知輸入，預設詢問"
 
+WRAPPER_KEYS = ("toolcall", "tool_call")
 TOOL_KEYS = ("tool_name", "toolname", "tool", "name")
 ARGS_KEYS = ("tool_input", "toolinput", "arguments", "args", "input", "parameters", "params")
 COMMAND_KEYS = ("commandline", "command", "cmd")
@@ -188,11 +189,36 @@ def _strings(data: dict[str, Any], keys: Iterable[str]) -> list[str]:
     return values
 
 
+def _unwrap(data: dict[str, Any]) -> dict[str, Any] | None:
+    """取出 Antigravity 的 toolCall / tool_call 包裝（可能是物件或 JSON 字串）；沒有包裝時回傳 None。"""
+    wrapped = [data[key] for key in WRAPPER_KEYS if key in data and data[key] is not None]
+    if not wrapped:
+        return None
+    if len(wrapped) > 1:
+        raise ValueError("同時有 toolCall 與 tool_call")
+    inner = wrapped[0]
+    if isinstance(inner, str):
+        inner = json.loads(inner)
+    if not isinstance(inner, dict):
+        raise ValueError("toolCall 不是物件")
+    return inner
+
+
 def decide(payload: Any) -> dict[str, str]:
-    """依 hook 輸入決定 allow / deny / force_ask。格式不對會丟例外（由 evaluate 轉成 force_ask）。"""
+    """依 hook 輸入決定 allow / deny / force_ask。格式不對會丟例外（由 evaluate 轉成 force_ask）。
+
+    支援 Antigravity 的 {"toolCall": {"name": ..., "args": {...}}} 包裝；
+    若外層同時也有工具欄位，兩邊都判定並取最嚴格的結果，避免用另一層偷渡。
+    """
     if not isinstance(payload, dict):
         raise ValueError("輸入不是物件")
     data = _lower_keys(payload)
+    inner = _unwrap(data)
+    if inner is not None:
+        if _pick(data, TOOL_KEYS) is None:
+            return decide(inner)
+        outer = {k: v for k, v in payload.items() if str(k).lower() not in WRAPPER_KEYS}
+        return strictest([decide(inner), decide(outer)])
     tool = _pick(data, TOOL_KEYS)
     if not isinstance(tool, str) or not tool.strip():
         raise ValueError("缺少工具名稱")

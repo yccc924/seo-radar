@@ -230,6 +230,54 @@ def test_conflicting_keys_use_strictest() -> None:
     assert sg.evaluate(json.dumps(payload))["decision"] == "force_ask"
 
 
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("pytest", "allow"),
+        ("python scripts/admin_edit.py", "deny"),
+        ("rm -rf build", "force_ask"),
+    ],
+)
+@pytest.mark.parametrize("wrapper", ["toolCall", "tool_call"])
+def test_antigravity_tool_call_wrapper(wrapper: str, command: str, expected: str) -> None:
+    """Antigravity 官方格式 {"toolCall": {"name": ..., "args": {...}}} 要能解包。"""
+    payload = {wrapper: {"name": "run_command", "args": {"CommandLine": command}}}
+    assert sg.evaluate(json.dumps(payload))["decision"] == expected
+
+
+def test_tool_call_wrapper_as_json_string() -> None:
+    payload = {"toolCall": json.dumps({"name": "view_file", "args": {"AbsolutePath": "sogi_accounts.json"}})}
+    assert sg.evaluate(json.dumps(payload))["decision"] == "deny"
+
+
+def test_tool_call_wrapper_cannot_smuggle() -> None:
+    """外層與 toolCall 內層都有工具時取最嚴格，不能用無害的一層偷渡。"""
+    payload = {
+        "tool_name": "run_command",
+        "tool_input": {"CommandLine": "git status"},
+        "toolCall": {"name": "run_command", "args": {"CommandLine": "python scripts/admin_edit.py"}},
+    }
+    assert sg.evaluate(json.dumps(payload))["decision"] == "deny"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"toolCall": "not json"},
+        {"toolCall": []},
+        {"toolCall": {}},
+        {"toolCall": {"name": "run_command"}},
+        {"toolCall": {"name": "run_command", "args": {}}},
+        {
+            "toolCall": {"name": "run_command", "args": {"CommandLine": "git status"}},
+            "tool_call": {"name": "run_command", "args": {"CommandLine": "git status"}},
+        },
+    ],
+)
+def test_malformed_tool_call_asks(payload: Any) -> None:
+    assert sg.evaluate(json.dumps(payload)) == {"decision": "force_ask", "reason": sg.ERROR_REASON}
+
+
 # ---------------------------------------------------------------------------
 # 容錯：畸形 JSON、缺欄位、例外 → force_ask
 # ---------------------------------------------------------------------------
