@@ -22,6 +22,8 @@
 - field 只接受 FIELDS 列出的欄位；網址只接受 ALLOWED_PATH_PREFIXES 開頭的後台頁面。
 
 安全規則：
+- 只能由真人在終端機執行：啟動時 sys.stdin 不是終端機就拒絕執行；
+  確認 y 時在 Windows 用 msvcrt.getch() 直讀實體鍵盤，不接受管線輸入或重新導向。
 - 瀏覽器有畫面（headless=False、slow_mo=800），開始操作前印出「瀏覽器即將開始操作，請觀看」。
 - cookie 用 admin_explore.py 相同的 load_get_cookies 取得，只存在記憶體，
   絕不印出、寫入 log、備份或任何檔案。
@@ -722,13 +724,49 @@ class EditResult:
     message: str = ""
 
 
+def is_interactive(stdin: Any = None) -> bool:
+    """檢查標準輸入是否為真人終端機；管線、重新導向或檢查失敗都視為否。"""
+    stream = sys.stdin if stdin is None else stdin
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def ask_keyboard(prompt: str, getch: Callable[[], bytes | str] | None = None) -> str:
+    """顯示提示並讀取一個實體鍵盤按鍵。
+
+    Windows 用 msvcrt.getch() 直接讀主控台鍵盤，不經過 stdin，
+    所以管線或重新導向的內容不會被當成確認。讀取前先清掉鍵盤緩衝區，
+    避免事先打好的字被當成回答。非 Windows 時必須是終端機才用 input()，否則一律視為取消。
+    getch 可替換（測試用）。
+    """
+    print(prompt, end="", flush=True)
+    if getch is None:
+        if sys.platform == "win32":
+            import msvcrt
+
+            while msvcrt.kbhit():
+                msvcrt.getch()
+            getch = msvcrt.getch
+        elif is_interactive():
+            return input()
+        else:
+            print()
+            return ""
+    key = getch()
+    text = key.decode("utf-8", errors="replace") if isinstance(key, bytes) else str(key)
+    print(text if text.isprintable() else "")
+    return text
+
+
 @dataclass
 class RunOptions:
     """執行選項與可替換的外部依賴（測試用）。"""
 
     apply: bool = False
     confirm: str = "each"
-    ask: Callable[[str], str] = lambda prompt: input(prompt)
+    ask: Callable[[str], str] = lambda prompt: ask_keyboard(prompt)
     sleep: Callable[[float], None] = time.sleep
     random_delay: Callable[[], float] = random_page_delay
     backup_root: Path = BACKUP_DIR
@@ -878,9 +916,16 @@ def launch_browser(playwright: Any) -> Any:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """命令列進入點。任何錯誤都只顯示例外類型，避免訊息夾帶 cookie。"""
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
+    """命令列進入點。任何錯誤都只顯示例外類型，避免訊息夾帶 cookie。
+
+    啟動時先檢查是否由真人在終端機執行；不是就拒絕執行（防止 AI 或腳本透過管線代為確認）。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    if not is_interactive():
+        print("拒絕執行：admin_edit.py 只能由使用者在終端機親自執行（偵測到非互動式輸入）", file=sys.stderr)
+        return 2
     args = parse_args(argv)
     log_path = setup_file_log(LOG_DIR, datetime.now())
     say(f"模式：{'執行（會儲存）' if args.apply else '預覽（不儲存）'}；確認方式：{args.confirm}；紀錄：{log_path}")

@@ -795,9 +795,96 @@ def test_parse_args_defaults() -> None:
         ae.parse_args(["--confirm=auto"])
 
 
-def test_main_batch_cancel_never_opens_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+class FakeStdin:
+    """假的 stdin：只回報是不是終端機。"""
+
+    def __init__(self, tty: bool) -> None:
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+class BrokenStdin:
+    """isatty() 會丟例外的 stdin（例如已關閉）。"""
+
+    def isatty(self) -> bool:
+        raise ValueError("I/O operation on closed file")
+
+
+@pytest.fixture
+def tty_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """模擬在終端機執行。"""
+    monkeypatch.setattr(ae.sys, "stdin", FakeStdin(True))
+
+
+def test_is_interactive() -> None:
+    assert ae.is_interactive(FakeStdin(True)) is True
+    assert ae.is_interactive(FakeStdin(False)) is False
+    assert ae.is_interactive(BrokenStdin()) is False
+    assert ae.is_interactive(object()) is False
+
+
+def test_main_refuses_non_tty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(ae, "LOG_DIR", tmp_path / "logs")
-    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+    monkeypatch.setattr(ae.sys, "stdin", FakeStdin(False))
+
+    def no_cookies(path: Any) -> Any:
+        raise AssertionError("非終端機不應取得 cookie")
+
+    monkeypatch.setattr(ae, "load_get_cookies", no_cookies)
+    file = ROOT / "changes" / "2026-10-17-s12.yaml"
+    assert ae.main(["--file", str(file), "--apply"]) == 2
+    assert "拒絕執行" in capsys.readouterr().err
+    assert not (tmp_path / "logs").exists()
+
+
+def test_ask_keyboard_reads_single_key(capsys: pytest.CaptureFixture[str]) -> None:
+    assert ae.ask_keyboard("確認？", getch=lambda: b"y") == "y"
+    assert ae.ask_keyboard("確認？", getch=lambda: "N") == "N"
+    assert ae.ask_keyboard("確認？", getch=lambda: b"\xe0") != "y"
+    assert "確認？" in capsys.readouterr().out
+
+
+def test_ask_keyboard_uses_msvcrt_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows 下讀 msvcrt.getch()，並先清掉事先打好的按鍵；不讀 stdin。"""
+    buffered = [b"y", b"y"]
+    keys = buffered + [b"n"]
+
+    class FakeMsvcrt:
+        @staticmethod
+        def kbhit() -> bool:
+            return bool(buffered)
+
+        @staticmethod
+        def getch() -> bytes:
+            if buffered:
+                buffered.pop()
+            return keys.pop(0)
+
+    monkeypatch.setattr(ae.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "msvcrt", FakeMsvcrt)
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("不應讀 stdin"))
+    assert ae.ask_keyboard("確認？") == "n"
+
+
+def test_ask_keyboard_non_windows_requires_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ae.sys, "platform", "linux")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    monkeypatch.setattr(ae.sys, "stdin", FakeStdin(False))
+    assert ae.ask_keyboard("確認？") == ""
+    monkeypatch.setattr(ae.sys, "stdin", FakeStdin(True))
+    assert ae.ask_keyboard("確認？") == "y"
+
+
+def test_run_options_default_ask_is_keyboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ae, "ask_keyboard", lambda prompt: f"kb:{prompt}")
+    assert ae.RunOptions().ask("確認？") == "kb:確認？"
+
+
+def test_main_batch_cancel_never_opens_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tty_stdin: None) -> None:
+    monkeypatch.setattr(ae, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(ae, "ask_keyboard", lambda prompt: "n")
 
     def no_cookies(path: Any) -> Any:
         raise AssertionError("取消後不應取得 cookie")
@@ -809,7 +896,7 @@ def test_main_batch_cancel_never_opens_browser(tmp_path: Path, monkeypatch: pyte
     assert "使用者取消" in log_text
 
 
-def test_main_without_valid_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_without_valid_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tty_stdin: None) -> None:
     monkeypatch.setattr(ae, "LOG_DIR", tmp_path / "logs")
     empty = tmp_path / "empty.yaml"
     empty.write_text("changes: []\n", encoding="utf-8")

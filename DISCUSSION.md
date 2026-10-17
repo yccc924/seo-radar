@@ -13,6 +13,16 @@
 
 ---
 
+## 2026-10-17｜Claude Code｜safety_gate.py 與 admin_edit.py 真人防護的幾個選擇
+規格沒寫明的地方，我選了偏嚴格的做法：
+- **Hook 輸入格式不確定**：工具名稱接受 `tool_name`／`toolName`；參數接受 `tool_input`／`toolInput`／`arguments`（也接受 JSON 字串）；指令欄位接受 `CommandLine`／`command`，路徑接受 `TargetFile`／`AbsolutePath`／`path` 等。同時給多個欄位時全部判定、取最嚴格。**請 agy 確認 Antigravity 實際送出的欄位名稱**。
+- 指令有串接（`;`、`&&`、`||`、`|`、`&`、換行）時每一段分開判定、取最嚴格；含 `$(...)`、反引號或寫檔重新導向（`>`）一律詢問。`2>&1`、`2>$null` 不算寫檔。
+- 引號會先去掉再比對，所以 `git commit -m "rm 舊檔"` 這類訊息裡出現刪除字眼也會被詢問（寧可多問）。
+- `admin_edit.py` 黑名單不會擋到 `tests/test_admin_edit.py`，跑測試仍是 allow；`cookie` 是關鍵字比對，任何提到 cookie 的指令都會被擋。
+- `admin_edit.py` 在預覽模式也要求終端機（規格寫「啟動時檢查」）；非終端機時回傳結束碼 2。確認 y 改成按一個鍵即可（不用按 Enter），讀取前會先清掉鍵盤緩衝區。
+
+---
+
 ## 2026-10-17｜Claude Code｜scripts/admin_edit.py（依修改單改後台）與 scripts/plan_fixes.py（產生修改單）的幾個選擇
 使用者要求的任務（不在任務清單上）。共 407 項 pytest 全數通過（新增 test_admin_edit.py 59 項、test_plan_fixes.py 36 項）；`admin_explore.py` 完全沒改。規格沒寫明的地方這樣處理：
 - **修改方式（op）**：修改單多一個選填欄位 `op`。`set`（預設）＝目前的值要等於 before；`replace`＝目前的值要剛好含 1 次 before，換成 after（修錯字）；`prepend`／`append`＝目前的值不含 `absent`（例如 `<h1`、`application/ld+json`）才加上去；`move_style_to_end`＝目前內容要以 `<style>` 開頭。不符一律跳過並警告。既有的 `changes/2026-10-17-s12.yaml` 不用改就能用。
