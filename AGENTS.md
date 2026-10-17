@@ -49,4 +49,30 @@
 - 之後每次健檢發現可自動修正的問題，自動執行 `scripts/plan_fixes.py` 產生修改單，並告訴使用者：發現什麼問題、修改單檔名、預覽與執行指令。
 - 你本人不得執行 `scripts/admin_edit.py` 的 `--apply`，一律由使用者親自執行。
 
+### 權限規則與安全閘門分類（每次執行指令嚴格遵守）
+所有終端機指令與檔案操作必須經過安全閘門（`scripts/safety_gate.py` 與 `hooks.json`）判定，分類如下：
+
+1. **自動允許（allow）**：
+   - `.venv\Scripts\python -m pytest`
+   - `.venv\Scripts\python scripts\quick_audit.py`
+   - `.venv\Scripts\python scripts\admin_explore.py`
+   - `.venv\Scripts\python scripts\plan_fixes.py`
+   - `.venv\Scripts\python scripts\build_buyback_hub.py`
+   - `.venv\Scripts\python -m pip install`
+   - `git status`、`git diff`、`git log`、`git add`、`git commit`、`git push`
+   - `claude -p`
+
+2. **一律禁止（deny）**：
+   - `.venv\Scripts\python scripts\admin_edit.py`（不論任何參數，只有使用者親自能執行，AI 程式一律禁止）
+   - `git push --force`、`git reset --hard`
+   - 讀取 `xinchi-tools-main` 底下的 `sogi_accounts.json` 和任何 cookie 檔案
+
+3. **仍要詢問（force_ask）**：
+   - 刪除檔案（`Remove-Item`、`rm`、`del`）
+   - 修改 `.env`、`.gitignore`
+   - 修改關鍵安全保護檔案：`.agents/hooks.json`、`scripts/safety_gate.py`、`AGENTS.md`（防止規則被悄悄修改，任何人變更皆須確認）
+   - 任何不在上述清單中的未知指令（預設必須詢問，絕不預設放行）
+   - `safety_gate.py` 若執行時發生錯誤、例外或收到看不懂的輸入，一律回傳 `force_ask`，絕不回傳 `allow`
+
+
 
