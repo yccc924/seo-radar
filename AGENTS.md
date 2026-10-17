@@ -20,4 +20,15 @@
 - 禁止讀取 `C:\Users\ycc\Desktop\xinchi-tools-main` 裡的任何 cookie 或帳號檔案（例如 `sogi_accounts.json`）。
 - 查不到或不確定的事，直接寫「不確定」，不要猜。
 - 完成任務後把任務清單的狀態改成 `[x]`。
-- 執行終端機指令時，一次只執行一個指令，不要用分號 `;` 或 `&&` 把多個指令串在一起。
+
+### 執行指令前的說明（使用者不熟終端機指令）
+每次執行終端機指令前，先用一行白話中文說明這個指令要做什麼，並在開頭標上風險等級：
+- 🟢 只讀取：看檔案、列目錄、git status、git diff、git log、跑 pytest
+- 🟡 修改本機：寫檔、git add、git commit、安裝套件、執行只讀本機檔案的腳本
+- 🔴 對外或不可逆：git push、刪除檔案、派工給 Claude（claude -p）、執行任何會連到 sinchih.com.tw 或 Cyberbiz 後台的腳本、讀取 xinchi-tools-main
+
+規則：
+- 一次只執行一個指令，不要用 ; 或 && 串接
+- 🔴 的指令，說明裡要寫清楚「會影響什麼」，例如「會上傳 3 個檔案到 GitHub」
+- 每次開始一個新任務前，先確認工作區乾淨（沒有未 commit 的修改），不乾淨就先 commit
+
