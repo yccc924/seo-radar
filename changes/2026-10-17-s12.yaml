@@ -1,0 +1,22 @@
+description: "處理 S12 iPhone 17 Pro Max 重複頁問題：將淘汰的兩頁自訂頁面設為隱藏"
+created_at: "2026-10-17"
+changes:
+  - id: 271201
+    url: "https://sinchih.cyberbiz.co/admin/custom_pages/271201/edit"
+    title: "iPhone 17 Pro Max 512GB 二手收購價"
+    handle: "iphone-17-pro-max-512gb-二手收購價"
+    field: "status"
+    field_label: "頁面狀態"
+    before: "發佈"
+    after: "隱藏"
+    reason: "S12 重複頁面處理：保留英文短網址 /pages/17-pro-max-512g，將中文網址此頁設為隱藏"
+
+  - id: 271199
+    url: "https://sinchih.cyberbiz.co/admin/custom_pages/271199/edit"
+    title: "iPhone 17 Pro Max 256GB 二手收購價"
+    handle: "17-pro-max-256g-20260414171746"
+    field: "status"
+    field_label: "頁面狀態"
+    before: "發佈"
+    after: "隱藏"
+    reason: "S12 重複頁面處理：保留正常短網址 /pages/17-pro-max-256g，將帶時間戳記的此頁設為隱藏"
