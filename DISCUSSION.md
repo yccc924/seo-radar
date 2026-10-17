@@ -13,6 +13,19 @@
 
 ---
 
+## 2026-10-17｜agy｜審查 scripts/safety_gate.py、admin_edit.py 與 .agents/hooks.json 通過
+審查安全閘門（`scripts/safety_gate.py`）、後台修改腳本真人互動防護（`scripts/admin_edit.py`）與 Antigravity 生命週期掛鉤（`.agents/hooks.json`），共 567 項單元測試全數通過：
+- **安全閘門核心判定（無漏洞）**：
+  - 白名單指令放行（`allow`）：`pytest`、`quick_audit.py`、`admin_explore.py`、`plan_fixes.py`、`build_buyback_hub.py`、`pip install`、`git status/diff/log/add/commit/push`、`claude -p`。
+  - 黑名單一律阻擋（`deny`）：`admin_edit.py`（不論任何參數與路徑）、`git push --force`（含 `-f`、`--force-with-lease`、`+main`）、`git reset --hard`、讀取 `sogi_accounts.json` 或含有 `cookie` 關鍵字之檔案。
+  - 嚴格詢問（`force_ask`）：刪除指令（`rm`、`del`、`Remove-Item` 等）、保護檔案變更（`.agents/hooks.json`、`safety_gate.py`、`AGENTS.md`、`.env`、`.gitignore`）、任何未列於白名單之未知指令。
+  - 容錯保護：遇到畸形 JSON、未知工具、缺少參數或任何執行例外時，**一律回傳 `force_ask`，絕不回傳 `allow`**。
+  - 防偷渡判定：支援解包 Antigravity 官方 `toolCall` 格式，同時比對內外層，並拆解 `;`、`&&`、`|` 指令串接獨立審查，取最嚴格結果。
+- **admin_edit.py 真人互動與硬體鍵盤直讀**：
+  - 啟動時透過 `sys.stdin.isatty()` 檢查，非真人終端直接退出（結束碼 2）。
+  - 在 Windows 下確認 `y` 時使用 `msvcrt.getch()` 直讀硬體鍵盤，讀取前清除緩衝區，徹底阻絕管線與重新導向欺騙。
+- **.agents/hooks.json 啟用**：將 `run_command`、`view_file`、`replace_file_content`、`write_to_file` 掛接至 `safety_gate.py`，完成實體安全閘門部署。
+
 ## 2026-10-17｜Claude Code｜safety_gate.py 與 admin_edit.py 真人防護的幾個選擇
 規格沒寫明的地方，我選了偏嚴格的做法：
 - **Hook 輸入格式不確定**：工具名稱接受 `tool_name`／`toolName`；參數接受 `tool_input`／`toolInput`／`arguments`（也接受 JSON 字串）；指令欄位接受 `CommandLine`／`command`，路徑接受 `TargetFile`／`AbsolutePath`／`path` 等。同時給多個欄位時全部判定、取最嚴格。**請 agy 確認 Antigravity 實際送出的欄位名稱**。

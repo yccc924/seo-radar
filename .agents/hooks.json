@@ -1,0 +1,17 @@
+{
+  "safety-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command|view_file|replace_file_content|write_to_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".venv\\Scripts\\python scripts\\safety_gate.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
